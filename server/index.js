@@ -24,6 +24,7 @@ app.get('/api/flights', async (req, res) => {
         const estm = $(cols[3]).text().trim();
         const status = $(cols[4]).text().trim();
 
+        // Filter for Q2, NR, or VP flights
         if (flight.startsWith('Q2') || flight.startsWith('NR') || flight.startsWith('VP')) {
           flights.push({ flight, from, time, estm, status });
         }
@@ -32,7 +33,7 @@ app.get('/api/flights', async (req, res) => {
 
     res.json(flights);
   } catch (error) {
-    console.error(error);
+    console.error('Error fetching flight data:', error.message);
     res.status(500).json({ error: 'Failed to fetch flight data' });
   }
 });
