@@ -14,8 +14,8 @@ app.get('/api/flights', async (req, res) => {
       'https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=D&webfids_lang=1&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL',
       {
         headers: {
-          'User-Agent': 'Mozilla/5.0',
-        },
+          'User-Agent': 'Mozilla/5.0'
+        }
       }
     );
 
@@ -27,26 +27,21 @@ app.get('/api/flights', async (req, res) => {
 
     rows.each((i, row) => {
       const cols = $(row).find('td');
-      if (cols.length >= 5) {
-        const flight = $(cols[0]).text().trim();
-        const from = $(cols[1]).text().trim();
-        const time = $(cols[2]).text().trim();
-        const estm = $(cols[3]).text().trim();
-        const status = $(cols[4]).text().trim();
+      if (cols.length < 5) return;
 
-        console.log("Parsed Row:", { flight, from, time, estm, status });
+      const flight = $(cols[0]).text().trim();
+      const from = $(cols[1]).text().trim();
+      const time = $(cols[2]).text().trim();
+      const estm = $(cols[3]).text().trim();
+      const status = $(cols[4]).text().trim();
 
-        if (
-          flight.startsWith('Q2') ||
-          flight.startsWith('NR') ||
-          flight.startsWith('VP')
-        ) {
-          flights.push({ flight, from, time, estm, status });
-        }
+      if (flight.startsWith('Q2') || flight.startsWith('NR') || flight.startsWith('VP')) {
+        console.log('Parsed Row:', { flight, from, time, estm, status });
+        flights.push({ flight, from, time, estm, status });
       }
     });
 
-    console.log(`Filtered flights: ${flights.length}`);
+    console.log(`Filtered ${flights.length} domestic flights`);
     res.json(flights);
   } catch (error) {
     console.error('Error fetching flight data:', error.message);
