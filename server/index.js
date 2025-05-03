@@ -4,20 +4,17 @@ const cheerio = require('cheerio');
 const cors = require('cors');
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 10000;
 
 app.use(cors());
 
 app.get('/api/flights', async (req, res) => {
   try {
-    const response = await axios.get(
-      'https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=D&webfids_lang=1&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL',
-      {
-        headers: {
-          'User-Agent': 'Mozilla/5.0'
-        }
+    const response = await axios.get('https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=D&webfids_lang=1&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0'
       }
-    );
+    });
 
     const $ = cheerio.load(response.data);
     const rows = $('tr.schedulerow, tr.schedulerowtwo');
@@ -27,17 +24,19 @@ app.get('/api/flights', async (req, res) => {
 
     rows.each((i, row) => {
       const cols = $(row).find('td');
-      if (cols.length < 5) return;
+      if (cols.length >= 5) {
+        const flight = $(cols[0]).text().trim();
+        const from = $(cols[1]).text().trim();
+        const time = $(cols[2]).text().trim();
+        const estm = $(cols[3]).text().trim();
+        const status = $(cols[4]).text().trim();
 
-      const flight = $(cols[0]).text().trim();
-      const from = $(cols[1]).text().trim();
-      const time = $(cols[2]).text().trim();
-      const estm = $(cols[3]).text().trim();
-      const status = $(cols[4]).text().trim();
-
-      if (flight.startsWith('Q2') || flight.startsWith('NR') || flight.startsWith('VP')) {
-        console.log('Parsed Row:', { flight, from, time, estm, status });
-        flights.push({ flight, from, time, estm, status });
+        const flightCodeMatch = flight.match(/^(Q2|NR|VP)/i);
+        if (flightCodeMatch) {
+          const parsedFlight = { flight, from, time, estm, status };
+          console.log('Parsed row:', parsedFlight);
+          flights.push(parsedFlight);
+        }
       }
     });
 
