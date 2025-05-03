@@ -64,9 +64,10 @@ function App() {
               >
                 <td onClick={() => toggleHighlight(f.flight)}>{f.flight}</td>
                 <td>{f.from}</td>
-<td>{f.time}</td>         {/* TIME column */}
-<td>{f.estm}</td>         {/* ESTM column */}
-<td>{f.status}</td>       {/* STATUS column */}
+                <td>{f.time}</td>
+                <td>{f.estm}</td>
+                <td>{f.status}</td>
+                <td>
                   <button onClick={() => window.location.href = 'tel:+9603337144'}>Call</button>
                   <div className="timestamp">—</div>
                 </td>
