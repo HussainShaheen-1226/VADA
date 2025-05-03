@@ -1,6 +1,5 @@
 const express = require('express');
-const axios = require('axios');
-const cheerio = require('cheerio');
+const { chromium } = require('playwright');
 const cors = require('cors');
 
 const app = express();
@@ -10,55 +9,40 @@ app.use(cors());
 
 app.get('/api/flights', async (req, res) => {
   try {
-    const response = await axios.get(
-      'https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=D&webfids_lang=1&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL',
-      {
-        headers: {
-          'User-Agent': 'Mozilla/5.0',
-        },
-      }
-    );
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
 
-    const $ = cheerio.load(response.data);
-    const rows = $('tr.schedulerow, tr.schedulerowtwo');
-    console.log(`Found ${rows.length} rows`);
-
-    const flights = [];
-
-    rows.each((i, row) => {
-      const cols = $(row).find('td');
-      const colTexts = [];
-
-      cols.each((_, col) => {
-        colTexts.push($(col).text().trim());
-      });
-
-      console.log(`Row ${i} columns:`, colTexts); // DEBUG LINE
-
-      if (colTexts.length >= 5) {
-        // Try different indexes in case the structure is inconsistent
-        const flight = colTexts[0];
-        const from = colTexts[1];
-        const time = colTexts[2];
-        const estm = colTexts[3];
-        const status = colTexts[4];
-
-        console.log(`Parsed Row ${i}:`, { flight, from, time, estm, status });
-
-        if (
-          flight.startsWith('Q2') ||
-          flight.startsWith('NR') ||
-          flight.startsWith('VP')
-        ) {
-          flights.push({ flight, from, time, estm, status });
-        }
-      }
+    await page.goto('https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=D&webfids_lang=1&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL', {
+      waitUntil: 'domcontentloaded',
+      timeout: 30000
     });
 
-    console.log(`Filtered ${flights.length} domestic flights`);
+    const flights = await page.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll('tr.schedulerow, tr.schedulerowtwo'));
+      const data = [];
+
+      rows.forEach(row => {
+        const cols = row.querySelectorAll('td');
+        if (cols.length >= 5) {
+          const flight = cols[0].innerText.trim();
+          const from = cols[1].innerText.trim();
+          const time = cols[2].innerText.trim();
+          const estm = cols[3].innerText.trim();
+          const status = cols[4].innerText.trim();
+
+          if (flight.startsWith('Q2') || flight.startsWith('NR') || flight.startsWith('VP')) {
+            data.push({ flight, from, time, estm, status });
+          }
+        }
+      });
+
+      return data;
+    });
+
+    await browser.close();
     res.json(flights);
   } catch (error) {
-    console.error('Error fetching flight data:', error.message);
+    console.error('Error fetching flight data:', error);
     res.status(500).json({ error: 'Failed to fetch flight data' });
   }
 });
