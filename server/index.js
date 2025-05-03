@@ -10,10 +10,13 @@ app.use(cors());
 
 app.get('/api/flights', async (req, res) => {
   try {
-    const response = await axios.get('https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=D&webfids_lang=1&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL', {
+    const url =
+      'https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=D&webfids_lang=1&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL';
+
+    const response = await axios.get(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0'
-      }
+        'User-Agent': 'Mozilla/5.0',
+      },
     });
 
     const $ = cheerio.load(response.data);
@@ -24,26 +27,24 @@ app.get('/api/flights', async (req, res) => {
 
     rows.each((i, row) => {
       const cols = $(row).find('td');
-      if (cols.length >= 5) {
-        const flight = $(cols[0]).text().trim();
-        const from = $(cols[1]).text().trim();
-        const time = $(cols[2]).text().trim();
-        const estm = $(cols[3]).text().trim();
-        const status = $(cols[4]).text().trim();
 
-        const flightCodeMatch = flight.match(/^(Q2|NR|VP)/i);
-        if (flightCodeMatch) {
-          const parsedFlight = { flight, from, time, estm, status };
-          console.log('Parsed row:', parsedFlight);
-          flights.push(parsedFlight);
-        }
+      const flight = $(cols[0]).text().trim();
+      const from = $(cols[1]).text().trim();
+      const time = $(cols[2]).text().trim();
+      const estm = $(cols[3]).text().trim();
+      const status = $(cols[4]).text().trim();
+
+      if (flight.startsWith('Q2') || flight.startsWith('NR') || flight.startsWith('VP')) {
+        const flightData = { flight, from, time, estm, status };
+        flights.push(flightData);
+        console.log('Parsed Flight:', flightData);
       }
     });
 
     console.log(`Filtered ${flights.length} domestic flights`);
     res.json(flights);
   } catch (error) {
-    console.error('Error fetching flight data:', error.message);
+    console.error('Scraping failed:', error.message);
     res.status(500).json({ error: 'Failed to fetch flight data' });
   }
 });
