@@ -22,7 +22,7 @@ app.get('/api/flights', async (req, res) => {
           time: cols[0],        // Scheduled Time
           flight: flightNum,    // Flight Number
           from: cols[2],        // From
-          estm: cols[3],        // Estimated Arrival Time
+          estm: cols[3],        // Estimated Time
           status: cols[4],      // Flight Status
         });
       }
