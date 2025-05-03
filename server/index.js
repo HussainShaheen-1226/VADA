@@ -19,11 +19,11 @@ app.get('/api/flights', async (req, res) => {
       const flightNum = cols[1];
       if (flightNum && (flightNum.startsWith('NR') || flightNum.startsWith('Q2') || flightNum.startsWith('VP'))) {
         flights.push({
-          time: cols[0],
-          flight: flightNum,
-          from: cols[2],
-          estm: cols[3],
-          status: cols[4],
+          time: cols[0],        // TIME
+          flight: flightNum,    // FLIGHT
+          from: cols[2],        // FROM
+          estm: cols[3],        // ESTIMATED TIME
+          status: cols[4],      // STATUS (e.g., LANDED, DELAYED)
         });
       }
     });
