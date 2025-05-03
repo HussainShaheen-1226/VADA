@@ -10,30 +10,49 @@ app.use(cors());
 
 app.get('/api/flights', async (req, res) => {
   try {
-    const { data } = await axios.get('https://www.fis.com.mv/');
-    const $ = cheerio.load(data);
+    const response = await axios.get('https://www.fis.com.mv/flight-info/arrival-info.aspx');
+    const $ = cheerio.load(response.data);
+    const rows = $('tr.schedulerow, tr.schedulerowtwo');
+
     const flights = [];
 
-    $('table tr').each((i, row) => {
-      const cols = $(row).find('td');
+    rows.each((i, row) => {
+      const cells = $(row).find('td');
+      if (cells.length >= 6) {
+        const flightCode = $(cells[1]).text().trim();
+        const from = $(cells[2]).text().trim();
+        const time = $(cells[3]).text().trim();
+        const estm = $(cells[4]).text().trim();
+        const statusCell = $(cells[5]);
 
-      const flightNum = $(cols[1]).text().trim();
-      if (flightNum && (flightNum.startsWith('NR') || flightNum.startsWith('Q2') || flightNum.startsWith('VP'))) {
-        flights.push({
-          time: $(cols[0]).text().trim(),        // Scheduled time
-          flight: flightNum,
-          from: $(cols[2]).text().trim(),
-          estm: $(cols[3]).text().trim(),
-          status: $(cols[4]).text().trim()       // Status (LANDED, DELAYED, etc.)
-        });
+        const bgcolor = statusCell.attr('bgcolor') || '';
+        let status = '';
+
+        // Infer status from bgcolor
+        if (bgcolor.toLowerCase() === '#168aad') status = 'LANDED';
+        else if (bgcolor.toLowerCase() === '#f4a261') status = 'DELAYED';
+        else if (bgcolor.toLowerCase() === '#e63946') status = 'CANCELLED';
+
+        // Only include Q2 flights (domestic)
+        if (flightCode.startsWith('Q2')) {
+          flights.push({
+            flight: flightCode,
+            from,
+            time,
+            estm,
+            status
+          });
+        }
       }
     });
 
     res.json(flights);
-  } catch (err) {
-    console.error('Scraping failed:', err.message);
+  } catch (error) {
+    console.error('Error scraping flight data:', error);
     res.status(500).json({ error: 'Failed to fetch flight data' });
   }
 });
 
-app.listen(PORT, () => console.log(`VADA backend running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
