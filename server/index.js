@@ -8,47 +8,48 @@ const PORT = process.env.PORT || 5000;
 
 app.use(cors());
 
+// TEST ROUTE to check if fis.com.mv is reachable
+app.get('/test-fis', async (req, res) => {
+  try {
+    const response = await axios.get('https://www.fis.com.mv/');
+    res.send(`Success! Status code: ${response.status}`);
+  } catch (error) {
+    console.error('Failed to fetch fis.com.mv:', error.message);
+    res.status(500).send(`Fetch failed: ${error.message}`);
+  }
+});
+
+// MAIN FLIGHT DATA ROUTE
 app.get('/api/flights', async (req, res) => {
   try {
-    const response = await axios.get('https://www.fis.com.mv/flight-info/arrival-info.aspx');
-    const $ = cheerio.load(response.data);
-    const rows = $('tr.schedulerow, tr.schedulerowtwo');
+    const { data } = await axios.get('https://www.fis.com.mv/');
+    const $ = cheerio.load(data);
 
     const flights = [];
 
-    rows.each((i, row) => {
-      const cells = $(row).find('td');
-      if (cells.length >= 6) {
-        const flightCode = $(cells[1]).text().trim();
-        const from = $(cells[2]).text().trim();
-        const time = $(cells[3]).text().trim();
-        const estm = $(cells[4]).text().trim();
-        const statusCell = $(cells[5]);
+    $('tr.schedulerow').each((i, el) => {
+      const tds = $(el).find('td');
 
-        const bgcolor = statusCell.attr('bgcolor') || '';
-        let status = '';
+      const flight = $(tds[1]).text().trim();
+      const from = $(tds[2]).text().trim();
+      const time = $(tds[3]).text().trim();
+      const estm = $(tds[4]).text().trim();
 
-        // Infer status from bgcolor
-        if (bgcolor.toLowerCase() === '#168aad') status = 'LANDED';
-        else if (bgcolor.toLowerCase() === '#f4a261') status = 'DELAYED';
-        else if (bgcolor.toLowerCase() === '#e63946') status = 'CANCELLED';
+      const statusBg = $(tds[5]).attr('bgcolor');
+      let status = '—';
 
-        // Only include Q2 flights (domestic)
-        if (flightCode.startsWith('Q2')) {
-          flights.push({
-            flight: flightCode,
-            from,
-            time,
-            estm,
-            status
-          });
-        }
+      if (statusBg === '#168aad') status = 'LANDED';
+      else if (statusBg === '#f4a460') status = 'DELAYED';
+      else if (statusBg === '#ff0000') status = 'CANCELLED';
+
+      if (flight.startsWith('Q2')) {
+        flights.push({ time, flight, from, estm, status });
       }
     });
 
     res.json(flights);
-  } catch (error) {
-    console.error('Error scraping flight data:', error);
+  } catch (err) {
+    console.error('Flight data fetch error:', err.message);
     res.status(500).json({ error: 'Failed to fetch flight data' });
   }
 });
