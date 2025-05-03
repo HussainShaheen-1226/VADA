@@ -4,6 +4,7 @@ import './App.css';
 function App() {
   const [flights, setFlights] = useState([]);
   const [highlighted, setHighlighted] = useState([]);
+  const [now, setNow] = useState(new Date());
 
   const fetchData = async () => {
     const res = await fetch('https://vada-2db9.onrender.com/api/flights');
@@ -13,9 +14,20 @@ function App() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 30000);
+    const interval = setInterval(() => {
+      fetchData();
+      setNow(new Date());
+    }, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  const getTimeDifference = (estm) => {
+    if (!estm) return Infinity;
+    const nowTime = now.getHours() * 60 + now.getMinutes();
+    const [h, m] = estm.split(':');
+    const estmTime = parseInt(h) * 60 + parseInt(m);
+    return estmTime - nowTime;
+  };
 
   const toggleHighlight = (flight) => {
     setHighlighted(prev =>
@@ -29,23 +41,42 @@ function App() {
       <table>
         <thead>
           <tr>
-            <th>Time</th>
             <th>Flight</th>
             <th>From</th>
+            <th>Time</th>
             <th>ESTM</th>
             <th>Status</th>
+            <th>PSM</th>
+            <th>BUS</th>
           </tr>
         </thead>
         <tbody>
-          {flights.map((f, i) => (
-            <tr key={i} className={highlighted.includes(f.flight) ? 'highlight' : ''}>
-              <td>{f.time}</td>
-              <td onClick={() => toggleHighlight(f.flight)}>{f.flight}</td>
-              <td>{f.from}</td>
-              <td>{f.estm}</td>
-              <td>{f.status}</td>
-            </tr>
-          ))}
+          {flights.map((f, i) => {
+            const timeDiff = getTimeDifference(f.status);
+            const isLanded = (f.estm || '').toLowerCase().includes('landed');
+
+            return (
+              <tr
+                key={i}
+                className={
+                  `${highlighted.includes(f.flight) ? 'highlight' : ''} ${isLanded ? 'landed' : ''} ${timeDiff <= 20 && timeDiff >= 0 ? 'soon' : ''}`
+                }
+              >
+                <td onClick={() => toggleHighlight(f.flight)}>{f.flight}</td>
+                <td>{f.from}</td>
+                <td>{f.estm}</td>
+                <td>{f.status}</td>
+                <td>
+                  <button onClick={() => window.location.href = 'tel:+9603337144'}>Call</button>
+                  <div className="timestamp">—</div>
+                </td>
+                <td>
+                  <button onClick={() => window.location.href = 'tel:+9603337253'}>Call</button>
+                  <div className="timestamp">—</div>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
