@@ -15,12 +15,14 @@ app.get('/api/flights', async (req, res) => {
         'User-Agent': 'Mozilla/5.0'
       }
     });
+
     const $ = cheerio.load(response.data);
     const rows = $('tr.schedulerow, tr.schedulerowtwo');
     const flights = [];
 
     rows.each((i, row) => {
       const cols = $(row).find('td');
+
       if (cols.length >= 5) {
         const flight = $(cols[0]).text().trim();
         const from = $(cols[1]).text().trim();
@@ -28,12 +30,17 @@ app.get('/api/flights', async (req, res) => {
         const estm = $(cols[3]).text().trim();
         const status = $(cols[4]).text().trim();
 
-        // Filter for Q2, NR, or VP flights
+        console.log({ flight, from, time, estm, status });
+
         if (flight.startsWith('Q2') || flight.startsWith('NR') || flight.startsWith('VP')) {
           flights.push({ flight, from, time, estm, status });
         }
       }
     });
+
+    if (flights.length === 0) {
+      console.warn('No matching domestic flights found.');
+    }
 
     res.json(flights);
   } catch (error) {
