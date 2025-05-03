@@ -24,7 +24,7 @@ app.get('/api/flights', async (req, res) => {
           flight: flightNum,
           from: $(cols[2]).text().trim(),
           estm: $(cols[3]).text().trim(),
-          status: $(cols[4]).text().trim()       // LANDED / DELAYED
+          status: $(cols[4]).text().trim()       // Status (LANDED, DELAYED, etc.)
         });
       }
     });
