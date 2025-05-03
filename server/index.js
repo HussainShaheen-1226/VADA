@@ -10,7 +10,11 @@ app.use(cors());
 
 app.get('/api/flights', async (req, res) => {
   try {
-    const response = await axios.get('https://www.fis.com.mv/fis/arrival.aspx?type=dom');
+    const response = await axios.get('https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=D&webfids_lang=1&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0'
+      }
+    });
     const $ = cheerio.load(response.data);
     const rows = $('tr.schedulerow, tr.schedulerowtwo');
     const flights = [];
