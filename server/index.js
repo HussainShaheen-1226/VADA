@@ -16,22 +16,24 @@ app.get('/api/flights', async (req, res) => {
 
     $('table tr').each((i, row) => {
       const cols = $(row).find('td').map((i, el) => $(el).text().trim()).get();
-      const flightNum = cols[1];
 
-      // Correct order: [TIME, FLIGHT, FROM, ESTM, STATUS]
-      if (flightNum && (flightNum.startsWith('NR') || flightNum.startsWith('Q2') || flightNum.startsWith('VP'))) {
-        flights.push({
-          time: cols[0],        // Scheduled Time
-          flight: flightNum,    // Flight Number
-          from: cols[2],        // From
-          estm: cols[3],        // Estimated Time
-          status: cols[4],      // Status like LANDED, DELAYED
-        });
+      if (cols.length >= 5) {
+        const flightNum = cols[1];
+        if (flightNum && (flightNum.startsWith('NR') || flightNum.startsWith('Q2') || flightNum.startsWith('VP'))) {
+          flights.push({
+            time: cols[0],        // Scheduled Time
+            flight: flightNum,    // Flight Number
+            from: cols[2],        // Origin
+            estm: cols[3],        // Estimated Arrival
+            status: cols[4],      // Status like "LANDED", "DELAYED"
+          });
+        }
       }
     });
 
     res.json(flights);
   } catch (err) {
+    console.error('Scraping failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch flight data' });
   }
 });
