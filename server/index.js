@@ -17,13 +17,15 @@ app.get('/api/flights', async (req, res) => {
     $('table tr').each((i, row) => {
       const cols = $(row).find('td').map((i, el) => $(el).text().trim()).get();
       const flightNum = cols[1];
+
+      // Correct order: [TIME, FLIGHT, FROM, ESTM, STATUS]
       if (flightNum && (flightNum.startsWith('NR') || flightNum.startsWith('Q2') || flightNum.startsWith('VP'))) {
         flights.push({
           time: cols[0],        // Scheduled Time
           flight: flightNum,    // Flight Number
           from: cols[2],        // From
           estm: cols[3],        // Estimated Time
-          status: cols[4],      // Flight Status
+          status: cols[4],      // Status like LANDED, DELAYED
         });
       }
     });
