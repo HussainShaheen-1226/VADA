@@ -10,11 +10,14 @@ app.use(cors());
 
 app.get('/api/flights', async (req, res) => {
   try {
-    const response = await axios.get('https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=D&webfids_lang=1&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL', {
-      headers: {
-        'User-Agent': 'Mozilla/5.0'
+    const response = await axios.get(
+      'https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=D&webfids_lang=1&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL',
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0',
+        },
       }
-    });
+    );
 
     const $ = cheerio.load(response.data);
     const rows = $('tr.schedulerow, tr.schedulerowtwo');
@@ -29,12 +32,22 @@ app.get('/api/flights', async (req, res) => {
         const estm = $(cols[3]).text().trim();
         const status = $(cols[4]).text().trim();
 
-        // Filter for Q2, NR, or VP flights
-        if (flight.startsWith('Q2') || flight.startsWith('NR') || flight.startsWith('VP')) {
+        // Debug logging
+        console.log({ flight, from, time, estm, status });
+
+        if (
+          flight.startsWith('Q2') ||
+          flight.startsWith('NR') ||
+          flight.startsWith('VP')
+        ) {
           flights.push({ flight, from, time, estm, status });
         }
       }
     });
+
+    if (flights.length === 0) {
+      console.log('No matching domestic flights found.');
+    }
 
     res.json(flights);
   } catch (error) {
