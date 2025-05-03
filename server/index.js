@@ -27,15 +27,23 @@ app.get('/api/flights', async (req, res) => {
 
     rows.each((i, row) => {
       const cols = $(row).find('td');
-      const colTexts = cols.map((i, el) => $(el).text().trim()).get();
-      console.log(`Row ${i} columns:`, colTexts);
+      const colTexts = [];
 
-      if (colTexts.length >= 6) {
-        const flight = colTexts[0];         // adjust index if flight number isn't here
+      cols.each((_, col) => {
+        colTexts.push($(col).text().trim());
+      });
+
+      console.log(`Row ${i} columns:`, colTexts); // DEBUG LINE
+
+      if (colTexts.length >= 5) {
+        // Try different indexes in case the structure is inconsistent
+        const flight = colTexts[0];
         const from = colTexts[1];
         const time = colTexts[2];
         const estm = colTexts[3];
         const status = colTexts[4];
+
+        console.log(`Parsed Row ${i}:`, { flight, from, time, estm, status });
 
         if (
           flight.startsWith('Q2') ||
