@@ -14,20 +14,18 @@ app.get('/api/flights', async (req, res) => {
     const $ = cheerio.load(data);
     const flights = [];
 
-    $('table tr').each((i, row) => {
-      const cols = $(row).find('td').map((i, el) => $(el).text().trim()).get();
+    $('table tbody tr').each((i, row) => {
+      const cols = $(row).find('td');
 
-      if (cols.length >= 5) {
-        const flightNum = cols[1];
-        if (flightNum && (flightNum.startsWith('NR') || flightNum.startsWith('Q2') || flightNum.startsWith('VP'))) {
-          flights.push({
-            time: cols[0],        // Scheduled Time
-            flight: flightNum,    // Flight Number
-            from: cols[2],        // Origin
-            estm: cols[3],        // Estimated Arrival
-            status: cols[4],      // Status like "LANDED", "DELAYED"
-          });
-        }
+      const flightNum = $(cols[1]).text().trim();
+      if (flightNum && (flightNum.startsWith('NR') || flightNum.startsWith('Q2') || flightNum.startsWith('VP'))) {
+        flights.push({
+          time: $(cols[0]).text().trim(),        // Scheduled time
+          flight: flightNum,                     // Flight number
+          from: $(cols[2]).text().trim(),        // Origin
+          estm: $(cols[3]).text().trim(),        // Estimated arrival
+          status: $(cols[4]).text().trim()       // Status (LANDED, DELAYED, etc.)
+        });
       }
     });
 
