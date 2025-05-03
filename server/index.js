@@ -1,6 +1,6 @@
 const express = require('express');
-const { chromium } = require('playwright');
 const cors = require('cors');
+const { chromium } = require('playwright'); // Playwright import
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -11,17 +11,15 @@ app.get('/api/flights', async (req, res) => {
   try {
     const browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
-
     await page.goto('https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=D&webfids_lang=1&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL', {
       waitUntil: 'domcontentloaded',
-      timeout: 30000
     });
 
     const flights = await page.evaluate(() => {
       const rows = Array.from(document.querySelectorAll('tr.schedulerow, tr.schedulerowtwo'));
       const data = [];
 
-      rows.forEach(row => {
+      rows.forEach((row, i) => {
         const cols = row.querySelectorAll('td');
         if (cols.length >= 5) {
           const flight = cols[0].innerText.trim();
@@ -42,7 +40,7 @@ app.get('/api/flights', async (req, res) => {
     await browser.close();
     res.json(flights);
   } catch (error) {
-    console.error('Error fetching flight data:', error);
+    console.error('Error scraping flight data:', error.message);
     res.status(500).json({ error: 'Failed to fetch flight data' });
   }
 });
