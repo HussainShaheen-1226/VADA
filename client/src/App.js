@@ -22,7 +22,7 @@ function App() {
   }, []);
 
   const getTimeDifference = (estm) => {
-    if (!estm) return Infinity;
+    if (!estm || !/^\d{1,2}:\d{2}$/.test(estm)) return Infinity;
     const nowTime = now.getHours() * 60 + now.getMinutes();
     const [h, m] = estm.split(':');
     const estmTime = parseInt(h) * 60 + parseInt(m);
@@ -52,8 +52,8 @@ function App() {
         </thead>
         <tbody>
           {flights.map((f, i) => {
-            const timeDiff = getTimeDifference(f.status);
-            const isLanded = (f.estm || '').toLowerCase().includes('landed');
+            const timeDiff = getTimeDifference(f.estm);
+            const isLanded = (f.status || '').toLowerCase().includes('landed');
 
             return (
               <tr
