@@ -1,47 +1,26 @@
 const express = require('express');
+const axios = require('axios');
 const cors = require('cors');
-const { chromium } = require('playwright'); // Playwright import
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+const APIFY_TOKEN = 'apify_api_rgV4vIweNtC8dbiT9EwHpPU6TBo8M10hS8xa';
+const TASK_ID = 'hussainshaheen-1226/vada-fis-scraping';
 
 app.use(cors());
 
 app.get('/api/flights', async (req, res) => {
   try {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
-    await page.goto('https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=D&webfids_lang=1&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL', {
-      waitUntil: 'domcontentloaded',
-    });
+    const response = await axios.post(
+      `https://api.apify.com/v2/actor-tasks/${TASK_ID}/run-sync-get-dataset-items?token=${APIFY_TOKEN}`
+    );
 
-    const flights = await page.evaluate(() => {
-      const rows = Array.from(document.querySelectorAll('tr.schedulerow, tr.schedulerowtwo'));
-      const data = [];
-
-      rows.forEach((row, i) => {
-        const cols = row.querySelectorAll('td');
-        if (cols.length >= 5) {
-          const flight = cols[0].innerText.trim();
-          const from = cols[1].innerText.trim();
-          const time = cols[2].innerText.trim();
-          const estm = cols[3].innerText.trim();
-          const status = cols[4].innerText.trim();
-
-          if (flight.startsWith('Q2') || flight.startsWith('NR') || flight.startsWith('VP')) {
-            data.push({ flight, from, time, estm, status });
-          }
-        }
-      });
-
-      return data;
-    });
-
-    await browser.close();
-    res.json(flights);
+    const data = response.data;
+    res.json(data);
   } catch (error) {
-    console.error('Error scraping flight data:', error.message);
-    res.status(500).json({ error: 'Failed to fetch flight data' });
+    console.error('Apify fetch error:', error.message);
+    res.status(500).json({ error: 'Failed to fetch flight data from Apify' });
   }
 });
 
