@@ -1,15 +1,12 @@
 const express = require('express');
 const cors = require('cors');
 const { Actor } = require('apify-client');
-require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Your environment variable should be set in Render as APIFY_TOKEN
-const apifyToken = process.env.APIFY_TOKEN;
-
-// Make sure this matches your Apify actor ID exactly
+// Apify credentials from environment
+const apifyToken = process.env.APIFY_API_TOKEN;
 const actorId = 'hussainshaheen-1226/vada-flight-scraper';
 
 app.use(cors());
@@ -18,11 +15,12 @@ app.get('/api/flights', async (req, res) => {
   try {
     const client = new Actor({ token: apifyToken });
 
-    // Start the actor and wait for it to finish
+    // Call your actor
     const run = await client.actor(actorId).call();
+    const { defaultDatasetId } = run;
 
-    // Retrieve the results from the dataset
-    const { items } = await client.dataset(run.defaultDatasetId).listItems();
+    // Fetch items from the dataset
+    const { items } = await client.dataset(defaultDatasetId).listItems();
 
     res.json(items);
   } catch (error) {
@@ -32,5 +30,5 @@ app.get('/api/flights', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`Server is running on port ${PORT}`);
 });
