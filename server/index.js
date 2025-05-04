@@ -1,33 +1,18 @@
-const express = require('express');
-const cors = require('cors');
-const { Actor } = require('apify-client');
-
-const app = express();
-const PORT = process.env.PORT || 5000;
-
-const apifyToken = 'apify_api_rgV4vIweNtC8dbiT9EwHpPU6TBo8M10hS8xa';
-const actorId = 'hussainshaheen-1226~vada-fis-scraping';
-
-app.use(cors());
-
 app.get('/api/flights', async (req, res) => {
   try {
-    const client = new Actor({ token: apifyToken });
+    const client = new Actor({ token: process.env.APIFY_API_TOKEN });
+    console.log("Initialized Apify client");
 
-    // Run the actor
-    const run = await client.actor(actorId).call();
+    const run = await client.actor('hussainshaheen-1226~vada-fis-scraping').call();
+    console.log("Actor run result:", run);
+
     const { defaultDatasetId } = run;
+    const dataset = await client.dataset(defaultDatasetId).listItems();
+    console.log("Dataset items:", dataset);
 
-    // Fetch dataset items
-    const datasetItems = await client.dataset(defaultDatasetId).listItems();
-
-    res.json(datasetItems.items);
+    res.json(dataset.items);
   } catch (error) {
-    console.error('Failed to fetch flight data:', error.message);
-    res.status(500).json({ error: 'Failed to fetch flight data' });
+    console.error("Error fetching flight data:", error);
+    res.status(500).json({ error: "Failed to fetch flight data" });
   }
-});
-
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
 });
