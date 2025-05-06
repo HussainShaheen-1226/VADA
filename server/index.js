@@ -1,23 +1,39 @@
 const express = require('express');
+const axios = require('axios');
+const cheerio = require('cheerio');
 const cors = require('cors');
-const { ApifyClient } = require('apify-client');
-require('dotenv').config();
 
 const app = express();
-app.use(cors());
-
 const PORT = process.env.PORT || 5000;
 
-// Apify credentials from environment
-const apifyToken = process.env.APIFY_API_TOKEN;
-const datasetId = '260tNnfgDuuU56iLl';
-
-const client = new ApifyClient({ token: apifyToken });
+app.use(cors());
 
 app.get('/api/flights', async (req, res) => {
   try {
-    const { items } = await client.dataset(datasetId).listItems();
-    res.json(items);
+    const response = await axios.get('https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=D&webfids_lang=1&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0'
+      }
+    });
+
+    const $ = cheerio.load(response.data);
+    const rows = $('tr.schedulerow, tr.schedulerowtwo');
+    const flights = [];
+
+    rows.each((i, row) => {
+      const cols = $(row).find('td');
+      if (cols.length >= 5) {
+        const flight = $(cols[0]).text().trim();
+        const from = $(cols[1]).text().trim();
+        const time = $(cols[2]).text().trim();
+        const estm = $(cols[3]).text().trim();
+        const status = $(cols[4]).text().trim();
+
+        flights.push({ flight, from, time, estm, status });
+      }
+    });
+
+    res.json(flights);
   } catch (error) {
     console.error('Error fetching flight data:', error.message);
     res.status(500).json({ error: 'Failed to fetch flight data' });
@@ -25,5 +41,5 @@ app.get('/api/flights', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
