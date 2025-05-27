@@ -1,45 +1,48 @@
-const express = require('express');
-const axios = require('axios');
-const cheerio = require('cheerio');
-const cors = require('cors');
+const express = require("express");
+const cors = require("cors");
+const axios = require("axios");
+const cheerio = require("cheerio");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(cors());
 
-app.get('/api/flights', async (req, res) => {
+app.get("/flights", async (req, res) => {
   try {
-    const response = await axios.get('https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=D&webfids_lang=1&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL', {
-      headers: {
-        'User-Agent': 'Mozilla/5.0'
-      }
+    const url =
+      "https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=D&webfids_lang=1&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL";
+
+    const response = await axios.get(url, {
+      headers: { "User-Agent": "Mozilla/5.0" },
     });
 
     const $ = cheerio.load(response.data);
-    const rows = $('tr.schedulerow, tr.schedulerowtwo');
+    const rows = $("tr.schedulerow, tr.schedulerowtwo");
     const flights = [];
 
     rows.each((i, row) => {
-      const cols = $(row).find('td');
+      const cols = $(row).find("td");
       if (cols.length >= 5) {
-        const flight = $(cols[0]).text().trim();
-        const from = $(cols[1]).text().trim();
-        const time = $(cols[2]).text().trim();
-        const estm = $(cols[3]).text().trim();
-        const status = $(cols[4]).text().trim();
-
-        flights.push({ flight, from, time, estm, status });
+        flights.push({
+          flight: $(cols[0]).text().trim(),
+          origin: $(cols[1]).text().trim(),
+          scheduledTime: $(cols[2]).text().trim(),
+          estimatedTime: $(cols[3]).text().trim(),
+          status: $(cols[4]).text().trim(),
+          ss: "", // custom field
+          bus: "", // custom field
+        });
       }
     });
 
     res.json(flights);
   } catch (error) {
-    console.error('Error fetching flight data:', error.message);
-    res.status(500).json({ error: 'Failed to fetch flight data' });
+    console.error("Failed to fetch flights:", error.message);
+    res.status(500).json({ error: "Flight data unavailable." });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`VADA backend running at http://localhost:${PORT}`);
 });
