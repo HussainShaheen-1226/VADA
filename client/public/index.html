@@ -2,37 +2,98 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>VADA Flights</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VADA - Velana Arrivals Data Assistant</title>
   <style>
     body {
       font-family: Arial, sans-serif;
+      background: #f2f9fd;
       padding: 20px;
-    }
-    table {
-      border-collapse: collapse;
-      width: 100%;
-    }
-    th, td {
-      padding: 10px;
-      border: 1px solid #ddd;
+      margin: 0;
       text-align: center;
     }
+    h1 {
+      color: #0072bc;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+    }
+    th, td {
+      padding: 12px;
+      border: 1px solid #ccc;
+    }
     th {
-      background-color: #f5f5f5;
+      background-color: #0072bc;
+      color: white;
+    }
+    td {
+      background-color: white;
     }
     button {
-      padding: 6px 12px;
-      background-color: #007bff;
+      padding: 5px 10px;
+      background: #0072bc;
       color: white;
       border: none;
       border-radius: 4px;
     }
+    button:disabled {
+      background: #aaa;
+    }
   </style>
 </head>
 <body>
-  <h1>VADA Domestic Arrivals</h1>
-  <div id="root">Loading flight data...</div>
-  <script src="main.js"></script>
+  <h1>VADA - Velana Arrivals Data Assistant</h1>
+  <table id="flightTable">
+    <thead>
+      <tr>
+        <th>Flight</th>
+        <th>From</th>
+        <th>Time</th>
+        <th>ESTM</th>
+        <th>Status</th>
+        <th>SS</th>
+        <th>BUS</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <script>
+    async function loadFlights() {
+      try {
+        const res = await fetch("https://vada-2db9.onrender.com/flights");
+        const data = await res.json();
+
+        const tbody = document.querySelector("#flightTable tbody");
+        tbody.innerHTML = "";
+
+        data.forEach(flight => {
+          const row = document.createElement("tr");
+
+          row.innerHTML = `
+            <td>${flight.flight}</td>
+            <td>${flight.origin}</td>
+            <td>${flight.scheduledTime}</td>
+            <td>${flight.estimatedTime}</td>
+            <td>${flight.status || ''}</td>
+            <td><button onclick="callNumber('+9603337100')">Call</button></td>
+            <td><button disabled>—</button></td>
+          `;
+
+          tbody.appendChild(row);
+        });
+      } catch (err) {
+        console.error("Failed to load flight data", err);
+      }
+    }
+
+    function callNumber(number) {
+      window.location.href = `tel:${number}`;
+    }
+
+    loadFlights();
+  </script>
 </body>
 </html>
