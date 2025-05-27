@@ -5,7 +5,7 @@ function App() {
   const [flights, setFlights] = useState([]);
 
   useEffect(() => {
-    fetch("https://your-backend-url.com/flights") // replace with your actual backend URL
+    fetch("https://vada-2db9.onrender.com/flights")
       .then((res) => res.json())
       .then((data) => setFlights(data))
       .catch((err) => console.error("Fetch error:", err));
