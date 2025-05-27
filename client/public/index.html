@@ -2,10 +2,37 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>VADA</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>VADA Flights</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+    th, td {
+      padding: 10px;
+      border: 1px solid #ddd;
+      text-align: center;
+    }
+    th {
+      background-color: #f5f5f5;
+    }
+    button {
+      padding: 6px 12px;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+    }
+  </style>
 </head>
 <body>
-  <div id="root"></div>
+  <h1>VADA Domestic Arrivals</h1>
+  <div id="root">Loading flight data...</div>
+  <script src="main.js"></script>
 </body>
 </html>
