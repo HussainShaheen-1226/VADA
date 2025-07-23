@@ -25,13 +25,13 @@ app.get("/flights", async (req, res) => {
       const cols = $(row).find("td");
       if (cols.length >= 5) {
         flights.push({
-          flight: $(cols[0]).text().trim(),
-          origin: $(cols[1]).text().trim(),
-          scheduledTime: $(cols[2]).text().trim(),
-          estimatedTime: $(cols[3]).text().trim(),
-          status: $(cols[4]).text().trim(),
-          ss: "", // custom field
-          bus: "", // custom field
+          flight: $(cols[1]).text().trim(),
+          origin: $(cols[2]).text().trim(),
+          scheduledTime: $(cols[3]).text().trim(),
+          estimatedTime: $(cols[4]).text().trim(),
+          status: $(cols[5]).text().trim(),
+          ss: '+960 3 33 7100',
+          bus: '+960 3 33 7253'
         });
       }
     });
