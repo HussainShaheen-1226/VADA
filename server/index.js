@@ -1,48 +1,61 @@
-const express = require("express");
-const cors = require("cors");
-const axios = require("axios");
-const cheerio = require("cheerio");
+import express from 'express';
+import cors from 'cors';
+import fs from 'fs';
+import path from 'path';
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 10000;
+const LOG_FILE = path.resolve('./call-logs.json');
 
 app.use(cors());
+app.use(express.json());
 
-app.get("/flights", async (req, res) => {
+// Load call logs from file if exists
+let callLogs = [];
+if (fs.existsSync(LOG_FILE)) {
   try {
-    const url =
-      "https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=D&webfids_lang=1&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL";
+    const data = fs.readFileSync(LOG_FILE, 'utf-8');
+    callLogs = JSON.parse(data);
+  } catch (err) {
+    console.error('Failed to read call-logs.json:', err);
+    callLogs = [];
+  }
+}
 
-    const response = await axios.get(url, {
-      headers: { "User-Agent": "Mozilla/5.0" },
-    });
+// POST: Log a call
+app.post('/api/call-logs', (req, res) => {
+  const { userId, flight, type, timestamp } = req.body;
 
-    const $ = cheerio.load(response.data);
-    const rows = $("tr.schedulerow, tr.schedulerowtwo");
-    const flights = [];
+  if (!userId || !flight || !type || !timestamp) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
 
-    rows.each((i, row) => {
-      const cols = $(row).find("td");
-      if (cols.length >= 5) {
-        flights.push({
-          flight: $(cols[1]).text().trim(),
-          origin: $(cols[2]).text().trim(),
-          scheduledTime: $(cols[3]).text().trim(),
-          estimatedTime: $(cols[4]).text().trim(),
-          status: $(cols[5]).text().trim(),
-          ss: '+960 3 33 7100',
-          bus: '+960 3 33 7253'
-        });
-      }
-    });
+  const entry = { userId, flight, type, timestamp };
+  callLogs.push(entry);
 
-    res.json(flights);
-  } catch (error) {
-    console.error("Failed to fetch flights:", error.message);
-    res.status(500).json({ error: "Flight data unavailable." });
+  // Save logs to file
+  try {
+    fs.writeFileSync(LOG_FILE, JSON.stringify(callLogs, null, 2));
+    res.status(200).json({ message: 'Call logged successfully' });
+  } catch (err) {
+    console.error('Failed to write to call-logs.json:', err);
+    res.status(500).json({ error: 'Failed to save log' });
   }
 });
 
+// (Optional) GET: View call logs (with auth token)
+app.get('/api/call-logs', (req, res) => {
+  const auth = req.headers['authorization'];
+  const token = auth?.split(' ')[1];
+
+  if (token !== process.env.ADMIN_TOKEN) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+
+  res.json(callLogs);
+});
+
+// Start the server
 app.listen(PORT, () => {
-  console.log(`VADA backend running at http://localhost:${PORT}`);
+  console.log(`✅ Server running on port ${PORT}`);
 });
