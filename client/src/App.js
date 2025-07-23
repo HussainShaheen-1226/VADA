@@ -1,14 +1,23 @@
-import React, { useEffect, useState } from "react";
-import "./App.css";
+import React, { useEffect, useState } from 'react';
+import './App.css';
 
 function App() {
   const [flights, setFlights] = useState([]);
 
   useEffect(() => {
-    fetch("https://vada-2db9.onrender.com/flights")
-      .then((res) => res.json())
-      .then((data) => setFlights(data))
-      .catch((err) => console.error("Fetch error:", err));
+    const fetchFlights = async () => {
+      try {
+        const response = await fetch('https://vada-2db9.onrender.com'); // Make sure this matches your backend URL
+        const data = await response.json();
+        setFlights(data);
+      } catch (error) {
+        console.error('Error fetching flights:', error);
+      }
+    };
+
+    fetchFlights();
+    const interval = setInterval(fetchFlights, 60000); // Auto-refresh every 60s
+    return () => clearInterval(interval);
   }, []);
 
   return (
@@ -29,18 +38,20 @@ function App() {
         <tbody>
           {flights.map((flight, index) => (
             <tr key={index}>
-              <td>{flight.flight}</td>
-              <td>{flight.origin}</td>
-              <td>{flight.scheduledTime}</td>
-              <td>{flight.estimatedTime}</td>
-              <td>{flight.status}</td>
+              <td>{flight.flight || '–'}</td>
+              <td>{flight.origin || '–'}</td>
+              <td>{flight.scheduledTime || '–'}</td>
+              <td>{flight.estimatedTime || '–'}</td>
+              <td>{flight.status || '–'}</td>
               <td>
-                <a href="tel:+9603337100">
-                  <button>Call</button>
-                </a>
+                <button onClick={() => window.open('tel:+9603337100')}>Call</button>
               </td>
               <td>
-                <button>Call</button>
+                {flight.bus ? (
+                  <button onClick={() => window.open(`tel:${flight.bus}`)}>Call</button>
+                ) : (
+                  '–'
+                )}
               </td>
             </tr>
           ))}
