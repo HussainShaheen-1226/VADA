@@ -1,107 +1,109 @@
 import React, { useEffect, useState } from 'react';
+import axios from 'axios';
 import './App.css';
+
+const API_URL = import.meta.env.VITE_API_URL || 'https://vada-2db9.onrender.com';
 
 function App() {
   const [flights, setFlights] = useState([]);
-  const [userId, setUserId] = useState(localStorage.getItem('userId') || '');
-  const [callTimes, setCallTimes] = useState({});
+  const [userId, setUserId] = useState(() => {
+    const saved = localStorage.getItem('userId');
+    const savedAt = localStorage.getItem('userIdSavedAt');
+    const now = new Date().getTime();
+    if (saved && savedAt && now - parseInt(savedAt) < 14 * 24 * 60 * 60 * 1000) {
+      return saved;
+    }
+    return '';
+  });
 
   useEffect(() => {
-    const storedTime = localStorage.getItem('userIdTimestamp');
-    const twoWeeks = 14 * 24 * 60 * 60 * 1000;
-
-    if (!userId || !storedTime || Date.now() - storedTime > twoWeeks) {
-      const newId = prompt('Enter your User ID:');
-      if (newId) {
-        setUserId(newId);
-        localStorage.setItem('userId', newId);
-        localStorage.setItem('userIdTimestamp', Date.now());
+    if (!userId) {
+      const enteredId = prompt('Enter your ID');
+      if (enteredId) {
+        setUserId(enteredId);
+        localStorage.setItem('userId', enteredId);
+        localStorage.setItem('userIdSavedAt', Date.now().toString());
       }
     }
   }, [userId]);
 
   useEffect(() => {
-    const fetchFlights = async () => {
+    const fetchData = async () => {
       try {
-        const response = await fetch('/api/flights');
-        const data = await response.json();
-        setFlights(data);
-      } catch (error) {
-        console.error('Error fetching flights:', error);
+        const res = await axios.get(`${API_URL}/api/flights`);
+        setFlights(res.data);
+      } catch (err) {
+        console.error(err);
       }
     };
-
-    fetchFlights();
+    fetchData();
   }, []);
 
   const handleCall = async (flight, type) => {
     const timestamp = new Date().toISOString();
-    setCallTimes(prev => ({
-      ...prev,
-      [`${flight}-${type}`]: { timestamp, userId }
-    }));
-
-    const phoneNumber = type === 'ss' ? '+9603337100' : '+9603337253';
-    window.location.href = `tel:${phoneNumber}`;
-
+    const payload = { userId, flight, type, timestamp };
     try {
-      await fetch('/api/call-logs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, flight, type, timestamp })
-      });
-    } catch (error) {
-      console.error('Error logging call:', error);
+      await axios.post(`${API_URL}/api/call-logs`, payload);
+      const updated = flights.map(f =>
+        f.flight === flight ? { ...f, [`${type.toLowerCase()}Time`]: timestamp, [`${type.toLowerCase()}User`]: userId } : f
+      );
+      setFlights(updated);
+    } catch (err) {
+      console.error('Failed to log call', err);
     }
   };
 
   return (
-    <div className="App">
-      <h1>VADA - Velana Arrivals Data Assistant</h1>
-      <table>
-        <thead>
-          <tr>
-            <th>Flight</th>
-            <th>From</th>
-            <th>Time</th>
-            <th>ESTM</th>
-            <th>Status</th>
-            <th>SS</th>
-            <th>BUS</th>
-          </tr>
-        </thead>
-        <tbody>
-          {flights.map((flight, i) => (
-            <tr key={i}>
-              <td>{flight.flight}</td>
-              <td>{flight.from}</td>
-              <td>{flight.time}</td>
-              <td>{flight.estm}</td>
-              <td>{flight.status || ''}</td>
-              <td>
-                <button onClick={() => handleCall(flight.flight, 'ss')}>
-                  Call
-                </button>
-                {callTimes[`${flight.flight}-ss`] && (
-                  <div style={{ fontSize: '0.75rem' }}>
-                    {callTimes[`${flight.flight}-ss`].timestamp.split('T')[1].slice(0,5)} by {callTimes[`${flight.flight}-ss`].userId}
-                  </div>
-                )}
-              </td>
-              <td>
-                <button onClick={() => handleCall(flight.flight, 'bus')}>
-                  Call
-                </button>
-                {callTimes[`${flight.flight}-bus`] && (
-                  <div style={{ fontSize: '0.75rem' }}>
-                    {callTimes[`${flight.flight}-bus`].timestamp.split('T')[1].slice(0,5)} by {callTimes[`${flight.flight}-bus`].userId}
-                  </div>
-                )}
-              </td>
+    <div className="app">
+      <h1 className="title">VADA - Velana Arrivals Data Assistant</h1>
+      <div className="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Flight</th>
+              <th>From</th>
+              <th>Time</th>
+              <th>ESTM</th>
+              <th>Status</th>
+              <th>SS</th>
+              <th>BUS</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {flights.map((flight, i) => (
+              <tr key={i}>
+                <td>{flight.flight}</td>
+                <td>{flight.from}</td>
+                <td>{flight.time}</td>
+                <td>{flight.estm}</td>
+                <td>{flight.status}</td>
+                <td>
+                  <button className="ss-btn" onClick={() => handleCall(flight.flight, 'SS')}>
+                    SS
+                  </button>
+                  {flight.ssTime && (
+                    <div className="call-info">
+                      <div>{new Date(flight.ssTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                      <small>{flight.ssUser}</small>
+                    </div>
+                  )}
+                </td>
+                <td>
+                  <button className="bus-btn" onClick={() => handleCall(flight.flight, 'BUS')}>
+                    BUS
+                  </button>
+                  {flight.busTime && (
+                    <div className="call-info">
+                      <div>{new Date(flight.busTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                      <small>{flight.busUser}</small>
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
