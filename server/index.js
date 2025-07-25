@@ -2,26 +2,36 @@ import express from 'express';
 import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
+import dotenv from 'dotenv';
+dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 10000;
-const LOG_FILE = path.resolve('./call-logs.json');
+
+const LOG_FILE = path.resolve('./server/call-logs.json');
+const FLIGHTS_FILE = path.resolve('./server/flights.json');
 
 app.use(cors());
 app.use(express.json());
 
-// Load logs from file if exists
 let callLogs = [];
 if (fs.existsSync(LOG_FILE)) {
   try {
     callLogs = JSON.parse(fs.readFileSync(LOG_FILE, 'utf-8'));
-  } catch (err) {
-    console.error('Error loading call logs:', err);
+  } catch {
     callLogs = [];
   }
 }
 
-// POST: Log a call
+app.get('/api/flights', (req, res) => {
+  try {
+    const flights = JSON.parse(fs.readFileSync(FLIGHTS_FILE, 'utf-8'));
+    res.json(flights);
+  } catch {
+    res.status(500).json({ error: 'Unable to load flight data' });
+  }
+});
+
 app.post('/api/call-logs', (req, res) => {
   const { userId, flight, type, timestamp } = req.body;
 
@@ -29,30 +39,25 @@ app.post('/api/call-logs', (req, res) => {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  const logEntry = { userId, flight, type, timestamp };
-  callLogs.push(logEntry);
+  const entry = { userId, flight, type, timestamp };
+  callLogs.push(entry);
 
   try {
     fs.writeFileSync(LOG_FILE, JSON.stringify(callLogs, null, 2));
     res.status(200).json({ message: 'Call logged successfully' });
-  } catch (err) {
-    console.error('Error saving call log:', err);
-    res.status(500).json({ error: 'Failed to save log' });
+  } catch {
+    res.status(500).json({ error: 'Failed to save call log' });
   }
 });
 
-// GET: View call logs (with token auth)
 app.get('/api/call-logs', (req, res) => {
-  const auth = req.headers['authorization'];
-  const token = auth?.split(' ')[1];
-
+  const token = req.headers.authorization?.split(' ')[1];
   if (token !== process.env.ADMIN_TOKEN) {
     return res.status(403).json({ error: 'Unauthorized' });
   }
-
   res.json(callLogs);
 });
 
 app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
+  console.log(`✅ Backend running on port ${PORT}`);
 });
