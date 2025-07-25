@@ -1,13 +1,37 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>VADA - Velana Arrivals Data Assistant</title>
-    <link rel="stylesheet" href="%PUBLIC_URL%/style.css" />
-  </head>
-  <body>
-    <noscript>You need to enable JavaScript to run this app.</noscript>
-    <div id="root"></div>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VADA — Velana Arrivals Departure Assistant</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="overlay">
+    <h1>VADA — Velana Arrivals Departure Assistant</h1>
+    <div id="userPrompt" class="user-prompt">
+      <label for="userId">Enter your User ID:</label>
+      <input type="text" id="userIdInput" placeholder="Your ID..." />
+      <button id="saveUserId">Continue</button>
+    </div>
+    <div id="flightTableContainer" class="hidden">
+      <table>
+        <thead>
+          <tr>
+            <th>Flight</th>
+            <th>From</th>
+            <th>To</th>
+            <th>Time</th>
+            <th>Status</th>
+            <th>SS Call</th>
+            <th>BUS Call</th>
+          </tr>
+        </thead>
+        <tbody id="flightTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
 </html>
