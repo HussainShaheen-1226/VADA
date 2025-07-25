@@ -2,37 +2,45 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>VADA - Velana Arrivals Departure Assistant</title>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css"/>
 </head>
 <body>
-  <div class="container">
-    <h1>VADA</h1>
-
-    <!-- Loading spinner -->
-    <div id="loading-spinner" class="spinner"></div>
-
-    <!-- Flight Table -->
-    <table id="flightsTable" class="hidden">
-      <thead>
-        <tr>
-          <th>Flight</th>
-          <th>From</th>
-          <th>Time</th>
-          <th>Status</th>
-          <th>SS</th>
-          <th>BUS</th>
-        </tr>
-      </thead>
-      <tbody id="flightsBody">
-        <!-- Dynamic rows -->
-      </tbody>
-    </table>
-
-    <!-- Fallback message -->
-    <p id="noFlightsMessage" class="hidden">No flights available at the moment.</p>
+  <div id="overlay">
+    <div class="spinner"></div>
   </div>
+
+  <header>
+    <h1>Velana Arrivals Departure Assistant (VADA)</h1>
+  </header>
+
+  <main>
+    <div id="userPrompt" class="user-prompt">
+      <label for="userIdInput">Enter your user ID:</label>
+      <input type="text" id="userIdInput" placeholder="e.g. Agent007" />
+      <button id="saveUserId">Save</button>
+    </div>
+
+    <div id="flightTableWrapper">
+      <table id="flightTable">
+        <thead>
+          <tr>
+            <th>Flight</th>
+            <th>From</th>
+            <th>Time</th>
+            <th>Status</th>
+            <th>SS</th>
+            <th>BUS</th>
+          </tr>
+        </thead>
+        <tbody id="flightTableBody">
+          <!-- Flight rows will be inserted here -->
+        </tbody>
+      </table>
+      <div id="noFlightsMessage" style="display: none;">No flights available at the moment.</div>
+    </div>
+  </main>
 
   <script src="script.js"></script>
 </body>
