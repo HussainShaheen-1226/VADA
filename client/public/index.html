@@ -3,33 +3,35 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>VADA — Velana Arrivals Departure Assistant</title>
+  <title>VADA - Velana Arrivals Departure Assistant</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <div class="overlay">
-    <h1>VADA — Velana Arrivals Departure Assistant</h1>
-    <div id="userPrompt" class="user-prompt">
-      <label for="userId">Enter your User ID:</label>
-      <input type="text" id="userIdInput" placeholder="Your ID..." />
-      <button id="saveUserId">Continue</button>
-    </div>
-    <div id="flightTableContainer" class="hidden">
-      <table>
-        <thead>
-          <tr>
-            <th>Flight</th>
-            <th>From</th>
-            <th>To</th>
-            <th>Time</th>
-            <th>Status</th>
-            <th>SS Call</th>
-            <th>BUS Call</th>
-          </tr>
-        </thead>
-        <tbody id="flightTableBody"></tbody>
-      </table>
-    </div>
+  <div class="container">
+    <h1>VADA</h1>
+
+    <!-- Loading spinner -->
+    <div id="loading-spinner" class="spinner"></div>
+
+    <!-- Flight Table -->
+    <table id="flightsTable" class="hidden">
+      <thead>
+        <tr>
+          <th>Flight</th>
+          <th>From</th>
+          <th>Time</th>
+          <th>Status</th>
+          <th>SS</th>
+          <th>BUS</th>
+        </tr>
+      </thead>
+      <tbody id="flightsBody">
+        <!-- Dynamic rows -->
+      </tbody>
+    </table>
+
+    <!-- Fallback message -->
+    <p id="noFlightsMessage" class="hidden">No flights available at the moment.</p>
   </div>
 
   <script src="script.js"></script>
