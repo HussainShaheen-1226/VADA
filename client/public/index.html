@@ -1,99 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>VADA - Velana Arrivals Data Assistant</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #f2f9fd;
-      padding: 20px;
-      margin: 0;
-      text-align: center;
-    }
-    h1 {
-      color: #0072bc;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 20px;
-    }
-    th, td {
-      padding: 12px;
-      border: 1px solid #ccc;
-    }
-    th {
-      background-color: #0072bc;
-      color: white;
-    }
-    td {
-      background-color: white;
-    }
-    button {
-      padding: 5px 10px;
-      background: #0072bc;
-      color: white;
-      border: none;
-      border-radius: 4px;
-    }
-    button:disabled {
-      background: #aaa;
-    }
-  </style>
-</head>
-<body>
-  <h1>VADA - Velana Arrivals Data Assistant</h1>
-  <table id="flightTable">
-    <thead>
-      <tr>
-        <th>Flight</th>
-        <th>From</th>
-        <th>Time</th>
-        <th>ESTM</th>
-        <th>Status</th>
-        <th>SS</th>
-        <th>BUS</th>
-      </tr>
-    </thead>
-    <tbody></tbody>
-  </table>
-
-  <script>
-    async function loadFlights() {
-      try {
-        const res = await fetch("https://vada-2db9.onrender.com/flights");
-        const data = await res.json();
-
-        const tbody = document.querySelector("#flightTable tbody");
-        tbody.innerHTML = "";
-
-        data.forEach(flight => {
-          const row = document.createElement("tr");
-
-          row.innerHTML = `
-            <td>${flight.flight}</td>
-            <td>${flight.origin}</td>
-            <td>${flight.scheduledTime}</td>
-            <td>${flight.estimatedTime}</td>
-            <td>${flight.status || ''}</td>
-            <td><button onclick="callNumber('+9603337100')">Call</button></td>
-            <td><button disabled>—</button></td>
-          `;
-
-          tbody.appendChild(row);
-        });
-      } catch (err) {
-        console.error("Failed to load flight data", err);
-      }
-    }
-
-    function callNumber(number) {
-      window.location.href = `tel:${number}`;
-    }
-
-    loadFlights();
-  </script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VADA - Velana Arrivals Data Assistant</title>
+    <link rel="stylesheet" href="%PUBLIC_URL%/style.css" />
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+  </body>
 </html>
