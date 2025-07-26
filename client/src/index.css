@@ -1,81 +1,103 @@
+/* Background setup */
 body {
   margin: 0;
-  padding: 0;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  background-image: url('./background.png');
+  font-family: 'Segoe UI', sans-serif;
+  background-image: url('/background.PNG'); /* Match exact case */
   background-size: cover;
-  background-repeat: no-repeat;
+  background-position: center;
   background-attachment: fixed;
   color: white;
 }
 
-.container {
-  max-width: 90%;
-  margin: auto;
-  padding-top: 40px;
-}
-
-.title {
+/* App title */
+h1 {
   text-align: center;
+  margin-top: 30px;
   font-size: 2.2em;
-  margin-bottom: 30px;
-  font-weight: 600;
-  text-shadow: 1px 1px 4px rgba(0,0,0,0.5);
+  color: white;
 }
 
-.flight-table {
-  width: 100%;
-  border-collapse: collapse;
-  background-color: rgba(0, 0, 0, 0.6);
+/* Flight table styling */
+table {
+  width: 95%;
+  margin: 30px auto;
+  border-collapse: separate;
+  border-spacing: 0 12px;
+  backdrop-filter: blur(6px);
+  background-color: rgba(0, 0, 0, 0.3);
   border-radius: 12px;
   overflow: hidden;
-  backdrop-filter: blur(5px);
 }
 
-.flight-table thead {
-  background-color: rgba(255, 255, 255, 0.2);
-}
-
-.flight-table th,
-.flight-table td {
-  padding: 16px 12px;
+/* Table headers */
+th {
+  padding: 14px 12px;
   text-align: left;
+  font-weight: 600;
+  background-color: rgba(0, 0, 0, 0.5);
+  color: white;
+}
+
+/* Table cells */
+td {
+  padding: 14px 12px;
+  color: white;
+  background-color: rgba(255, 255, 255, 0.05);
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.flight-table tr:hover {
-  background-color: rgba(255, 255, 255, 0.1);
-}
-
-.call-buttons {
-  display: flex;
-  gap: 10px;
-}
-
-.call-buttons button {
+/* SS and BUS buttons */
+button.call-btn {
   padding: 8px 14px;
+  background-color: #FFD700; /* Yellow */
+  color: black;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   font-weight: bold;
   cursor: pointer;
-  color: black;
+  transition: transform 0.15s ease, background-color 0.2s ease;
 }
 
-.call-ss {
-  background-color: #f9dc5c;
+button.call-btn:hover {
+  transform: scale(1.05);
+  background-color: #ffea00;
 }
 
-.call-bus {
-  background-color: #f7c948;
+/* Spinner */
+#spinner {
+  text-align: center;
+  font-size: 1.3em;
+  margin-top: 60px;
 }
 
+/* No flights message */
+#no-flights {
+  text-align: center;
+  font-size: 1.1em;
+  margin-top: 60px;
+  color: #fff;
+}
+
+/* Time/User info display (SS/BUS clicked) */
+span.user-click-info {
+  display: block;
+  font-size: 0.9em;
+  color: #ddd;
+  margin-top: 5px;
+}
+
+/* Responsive tweaks */
 @media (max-width: 768px) {
-  .flight-table th, .flight-table td {
+  table {
     font-size: 0.9em;
-    padding: 10px 6px;
+    width: 98%;
   }
 
-  .title {
+  th, td {
+    padding: 10px 8px;
+  }
+
+  h1 {
     font-size: 1.5em;
   }
 }
