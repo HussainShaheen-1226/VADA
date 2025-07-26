@@ -1,103 +1,95 @@
-/* Background setup */
+/* index.css */
+
 body {
   margin: 0;
-  font-family: 'Segoe UI', sans-serif;
-  background-image: url('/background.PNG');
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background-image: url('/background.png');
   background-size: cover;
   background-position: center;
   background-attachment: fixed;
   color: white;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
 }
 
-/* App title */
 h1 {
+  margin-top: 20px;
   text-align: center;
-  margin-top: 30px;
-  font-size: 2.2em;
+  font-size: 2.5em;
   color: white;
+  text-shadow: 1px 1px 5px rgba(0, 0, 0, 0.7);
 }
 
-/* Flight table styling */
 table {
-  width: 95%;
-  margin: 30px auto;
-  border-collapse: separate;
-  border-spacing: 0 12px;
-  backdrop-filter: blur(6px);
-  background-color: rgba(0, 0, 0, 0.3);
+  width: 90%;
+  max-width: 1000px;
+  margin: 20px auto;
+  border-collapse: collapse;
   border-radius: 12px;
   overflow: hidden;
+  background-color: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(5px);
 }
 
-/* Table headers */
-th {
-  padding: 14px 12px;
+th, td {
+  padding: 16px;
   text-align: left;
-  font-weight: 600;
-  background-color: rgba(0, 0, 0, 0.5);
-  color: white;
-}
-
-/* Table cells */
-td {
-  padding: 14px 12px;
-  color: white;
-  background-color: rgba(255, 255, 255, 0.05);
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  color: white;
 }
 
-/* SS and BUS buttons */
-button.call-btn {
-  padding: 8px 14px;
-  background-color: #FFD700; /* Yellow */
-  color: black;
+th {
+  background-color: rgba(255, 255, 255, 0.1);
+  font-weight: 600;
+}
+
+tr:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+button {
+  padding: 10px 16px;
+  font-size: 1em;
+  font-weight: bold;
   border: none;
   border-radius: 8px;
-  font-weight: bold;
   cursor: pointer;
-  transition: transform 0.15s ease, background-color 0.2s ease;
+  background-color: #FFD700;
+  color: black;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
 }
 
-button.call-btn:hover {
+button:hover {
   transform: scale(1.05);
-  background-color: #ffea00;
+  box-shadow: 0 0 10px rgba(255, 215, 0, 0.8);
 }
 
-/* Spinner */
-#spinner {
-  text-align: center;
-  font-size: 1.3em;
-  margin-top: 60px;
+.spinner {
+  margin-top: 40px;
+  border: 6px solid rgba(255, 255, 255, 0.2);
+  border-top: 6px solid #FFD700;
+  border-radius: 50%;
+  width: 48px;
+  height: 48px;
+  animation: spin 1s linear infinite;
 }
 
-/* No flights message */
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
 #no-flights {
   text-align: center;
-  font-size: 1.1em;
-  margin-top: 60px;
-  color: #fff;
-}
-
-/* Time/User info display (SS/BUS clicked) */
-span.user-click-info {
-  display: block;
-  font-size: 0.9em;
-  color: #ddd;
-  margin-top: 5px;
-}
-
-/* Responsive tweaks */
-@media (max-width: 768px) {
-  table {
-    font-size: 0.9em;
-    width: 98%;
-  }
-
-  th, td {
-    padding: 10px 8px;
-  }
-
-  h1 {
-    font-size: 1.5em;
-  }
+  color: white;
+  font-size: 1.2em;
+  margin-top: 40px;
+  backdrop-filter: blur(5px);
 }
