@@ -1,39 +1,48 @@
-document.addEventListener('DOMContentLoaded', () => {
-  const userIdKey = 'vadaUserId';
-  const saved = localStorage.getItem(userIdKey);
-  const twoWeeks = 1000 * 60 * 60 * 24 * 14;
+document.addEventListener("DOMContentLoaded", () => {
+  const tableBody = document.getElementById("flight-table-body");
+  const loadingIndicator = document.getElementById("loading");
+  const fallbackMessage = document.getElementById("fallback");
 
-  if (!saved || (Date.now() - JSON.parse(saved).timestamp) > twoWeeks) {
-    const userId = prompt("Please enter your user ID:");
-    if (userId) {
-      localStorage.setItem(userIdKey, JSON.stringify({ id: userId, timestamp: Date.now() }));
+  const renderFlights = (flights) => {
+    if (!flights.length) {
+      fallbackMessage.textContent = "No flights available at the moment.";
+      return;
     }
-  }
 
-  const userId = JSON.parse(localStorage.getItem(userIdKey))?.id;
+    flights.forEach((flight) => {
+      const row = document.createElement("tr");
 
-  document.querySelectorAll('.call-btn').forEach(button => {
-    button.addEventListener('click', async () => {
-      const flight = button.dataset.flight;
-      const type = button.dataset.type;
+      row.innerHTML = `
+        <td>${flight.time}</td>
+        <td>${flight.flight}</td>
+        <td>${flight.origin}</td>
+        <td>${flight.status}</td>
+        <td>
+          <button onclick="logCallTime('SS')">SS</button>
+          <button onclick="logCallTime('BUS')">BUS</button>
+        </td>
+      `;
 
-      const timestamp = new Date().toISOString();
-
-      if (userId) {
-        // Show user log
-        const logText = document.createElement('span');
-        logText.style.fontSize = '0.75em';
-        logText.style.marginLeft = '8px';
-        logText.innerText = `⏱️ ${new Date().toLocaleTimeString()} (You: ${userId})`;
-        button.parentElement.appendChild(logText);
-
-        // Save to backend
-        await fetch('https://vada-2db9.onrender.com/api/call-logs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId, flight, type, timestamp })
-        });
-      }
+      tableBody.appendChild(row);
     });
-  });
+  };
+
+  const fetchFlights = async () => {
+    try {
+      const response = await fetch("/api/flights");
+      const data = await response.json();
+      loadingIndicator.style.display = "none";
+      renderFlights(data);
+    } catch (error) {
+      console.error("Error fetching flights:", error);
+      loadingIndicator.textContent = "Failed to load data.";
+    }
+  };
+
+  window.logCallTime = (type) => {
+    const now = new Date().toLocaleTimeString();
+    alert(`${type} call logged at ${now}`);
+  };
+
+  fetchFlights();
 });
