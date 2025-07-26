@@ -2,7 +2,7 @@
 body {
   margin: 0;
   font-family: 'Segoe UI', sans-serif;
-  background-image: url('/background.PNG'); /* Match exact case */
+  background-image: url('/background.PNG');
   background-size: cover;
   background-position: center;
   background-attachment: fixed;
