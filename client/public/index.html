@@ -4,44 +4,33 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>VADA - Velana Arrivals Departure Assistant</title>
-  <link rel="stylesheet" href="styles.css"/>
+  <link rel="stylesheet" href="/index.css" />
 </head>
 <body>
-  <div id="overlay">
-    <div class="spinner"></div>
+  <div id="app">
+    <h1>VADA - Velana Arrivals Departure Assistant</h1>
+
+    <div id="loading" class="spinner"></div>
+    <div id="no-flights" class="hidden">No flights available.</div>
+
+    <table id="flights-table">
+      <thead>
+        <tr>
+          <th>Flight</th>
+          <th>From</th>
+          <th>Time</th>
+          <th>ESTM</th>
+          <th>Status</th>
+          <th>SS</th>
+          <th>BUS</th>
+        </tr>
+      </thead>
+      <tbody id="flights-body">
+        <!-- Rows will be populated by script.js -->
+      </tbody>
+    </table>
   </div>
 
-  <header>
-    <h1>Velana Arrivals Departure Assistant (VADA)</h1>
-  </header>
-
-  <main>
-    <div id="userPrompt" class="user-prompt">
-      <label for="userIdInput">Enter your user ID:</label>
-      <input type="text" id="userIdInput" placeholder="e.g. Agent007" />
-      <button id="saveUserId">Save</button>
-    </div>
-
-    <div id="flightTableWrapper">
-      <table id="flightTable">
-        <thead>
-          <tr>
-            <th>Flight</th>
-            <th>From</th>
-            <th>Time</th>
-            <th>Status</th>
-            <th>SS</th>
-            <th>BUS</th>
-          </tr>
-        </thead>
-        <tbody id="flightTableBody">
-          <!-- Flight rows will be inserted here -->
-        </tbody>
-      </table>
-      <div id="noFlightsMessage" style="display: none;">No flights available at the moment.</div>
-    </div>
-  </main>
-
-  <script src="script.js"></script>
+  <script src="/script.js"></script>
 </body>
 </html>
