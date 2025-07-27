@@ -1,42 +1,25 @@
-const express = require("express");
-const fs = require("fs");
-const path = require("path");
-const cors = require("cors");
+import express from 'express';
+import cors from 'cors';
+import flights from './flights.json' assert { type: 'json' };
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Middleware
 app.use(cors());
 app.use(express.json());
 
-const flights = JSON.parse(fs.readFileSync(path.join(__dirname, "flights.json")));
+// Health check root route
+app.get('/', (req, res) => {
+  res.send('✅ VADA Backend is running!');
+});
 
-app.get("/flights", (req, res) => {
+// API route for flights
+app.get('/api/flights', (req, res) => {
   res.json(flights);
 });
 
-app.post("/flights/update", (req, res) => {
-  const { id, type, time, user } = req.body;
-
-  const flight = flights.find((f) => f.id === id);
-  if (!flight) {
-    return res.status(404).json({ error: "Flight not found" });
-  }
-
-  if (type === "ss") {
-    flight.ssTime = time;
-    flight.ssUser = user;
-  } else if (type === "bus") {
-    flight.busTime = time;
-    flight.busUser = user;
-  } else {
-    return res.status(400).json({ error: "Invalid update type" });
-  }
-
-  fs.writeFileSync(path.join(__dirname, "flights.json"), JSON.stringify(flights, null, 2));
-  res.json({ message: "Flight updated successfully" });
-});
-
+// Start server
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server listening on port ${PORT}`);
 });
