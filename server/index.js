@@ -1,6 +1,7 @@
-import express from 'express';
-import cors from 'cors';
-import flights from './flights.json' assert { type: 'json' };
+const express = require('express');
+const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -9,17 +10,27 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Health check root route
+// Load flights.json
+const flightsPath = path.join(__dirname, 'flights.json');
+let flights = [];
+
+try {
+  const data = fs.readFileSync(flightsPath, 'utf-8');
+  flights = JSON.parse(data);
+} catch (error) {
+  console.error('Error reading flights.json:', error.message);
+}
+
+// Routes
 app.get('/', (req, res) => {
-  res.send('✅ VADA Backend is running!');
+  res.send('VADA Backend Running');
 });
 
-// API route for flights
-app.get('/api/flights', (req, res) => {
+app.get('/flights', (req, res) => {
   res.json(flights);
 });
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`🚀 Server listening on port ${PORT}`);
+  console.log(`Server is running on port ${PORT}`);
 });
