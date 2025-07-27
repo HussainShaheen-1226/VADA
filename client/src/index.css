@@ -1,108 +1,79 @@
-/* Reset */
-body, html {
+/* client/src/index.css */
+
+body {
   margin: 0;
-  padding: 0;
-  font-family: 'Segoe UI', sans-serif;
-  background: url('/background.png') no-repeat center center fixed;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background-image: url('/background.png');
   background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
   color: white;
   min-height: 100vh;
 }
 
-/* Container */
 .container {
-  max-width: 1000px;
-  margin: 40px auto;
   padding: 20px;
-  background-color: rgba(0, 0, 0, 0.5);
-  border-radius: 16px;
-  box-shadow: 0 0 12px rgba(0, 0, 0, 0.3);
-  overflow-x: auto;
+  backdrop-filter: blur(5px);
+  background-color: rgba(0, 0, 0, 0.4);
+  border-radius: 10px;
+  max-width: 800px;
+  margin: 20px auto;
 }
 
-/* Title */
-h1 {
-  text-align: center;
-  font-size: 28px;
-  margin-bottom: 20px;
+.flight {
+  background-color: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  margin-bottom: 16px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-/* Table */
-table {
-  width: 100%;
-  border-collapse: collapse;
-  border-radius: 16px;
-  overflow: hidden;
-  background-color: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(6px);
+.flight strong {
+  font-size: 1.2rem;
 }
 
-th, td {
-  padding: 14px;
-  text-align: center;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  color: white;
+.flight div {
+  font-size: 1rem;
 }
 
-th {
-  background-color: rgba(255, 255, 255, 0.15);
-  font-weight: bold;
-}
-
-tr:last-child td {
-  border-bottom: none;
-}
-
-/* Buttons */
 button {
-  padding: 8px 14px;
-  margin: 4px 0;
+  background-color: yellow;
   border: none;
-  border-radius: 8px;
-  background-color: #ffd700;
-  color: #000;
+  padding: 8px 12px;
+  margin: 4px;
   font-weight: bold;
+  border-radius: 6px;
   cursor: pointer;
-  transition: transform 0.2s ease;
+  transition: transform 0.2s, background-color 0.2s;
 }
 
 button:hover {
   transform: scale(1.05);
+  background-color: #f4d700;
 }
 
-.call-time {
-  font-size: 12px;
-  margin-top: 4px;
-  color: #fff;
+button:active {
+  transform: scale(0.98);
 }
 
-/* Loader or empty */
-.loader,
-.no-flights {
-  text-align: center;
-  font-size: 20px;
-  padding: 40px;
-  color: white;
+button:focus {
+  outline: 2px solid white;
 }
 
-/* Mobile */
-@media (max-width: 768px) {
-  th, td {
-    padding: 10px 6px;
-    font-size: 13px;
+@media (max-width: 600px) {
+  .container {
+    margin: 10px;
+    padding: 10px;
   }
 
-  h1 {
-    font-size: 22px;
+  .flight {
+    padding: 12px;
   }
 
   button {
     padding: 6px 10px;
-    font-size: 13px;
-  }
-
-  .container {
-    margin: 20px;
-    padding: 16px;
+    font-size: 0.9rem;
   }
 }
