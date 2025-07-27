@@ -1,13 +1,105 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" href="/favicon.ico" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>VADA - Velana Arrivals Data Assistant</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/index.js"></script>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Velana Arrivals Departure Assistant (VADA)</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>Velana Arrivals Departure Assistant (VADA)</h1>
+
+    <div class="loader">Loading flights...</div>
+
+    <table style="display: none">
+      <thead>
+        <tr>
+          <th>Airline</th>
+          <th>Flight</th>
+          <th>Origin</th>
+          <th>STA</th>
+          <th>ETD</th>
+          <th>Gate</th>
+          <th>Bay</th>
+          <th>Status</th>
+          <th>SS</th>
+          <th>BUS</th>
+        </tr>
+      </thead>
+      <tbody id="flight-body">
+        <!-- Flight rows will be inserted here -->
+      </tbody>
+    </table>
+
+    <div class="no-flights" style="display: none">No flights available</div>
+  </div>
+
+  <script>
+    const table = document.querySelector("table");
+    const loader = document.querySelector(".loader");
+    const noFlights = document.querySelector(".no-flights");
+    const tbody = document.getElementById("flight-body");
+
+    let userId = localStorage.getItem("userId");
+    let storedTime = localStorage.getItem("userIdTime");
+    const now = new Date().getTime();
+
+    if (!userId || !storedTime || now - parseInt(storedTime) > 14 * 24 * 60 * 60 * 1000) {
+      userId = prompt("Enter your ID:");
+      if (userId) {
+        localStorage.setItem("userId", userId);
+        localStorage.setItem("userIdTime", now.toString());
+      }
+    }
+
+    fetch("https://vada-2db9.onrender.com/flights")
+      .then(res => res.json())
+      .then(flights => {
+        loader.style.display = "none";
+
+        if (!flights.length) {
+          noFlights.style.display = "block";
+          return;
+        }
+
+        table.style.display = "table";
+
+        flights.forEach((flight, index) => {
+          const tr = document.createElement("tr");
+
+          tr.innerHTML = `
+            <td>${flight.airline}</td>
+            <td>${flight.flightNo}</td>
+            <td>${flight.origin}</td>
+            <td>${flight.sta}</td>
+            <td>${flight.etd}</td>
+            <td>${flight.gate}</td>
+            <td>${flight.bay}</td>
+            <td>${flight.status}</td>
+            <td>
+              <button onclick="handleCall(${index}, 'ss')">SS</button>
+              <div class="call-time" id="ss-${index}"></div>
+            </td>
+            <td>
+              <button onclick="handleCall(${index}, 'bus')">BUS</button>
+              <div class="call-time" id="bus-${index}"></div>
+            </td>
+          `;
+
+          tbody.appendChild(tr);
+        });
+      })
+      .catch(err => {
+        console.error("Error fetching flights:", err);
+        loader.innerText = "Error loading flights.";
+      });
+
+    function handleCall(index, type) {
+      const time = new Date().toLocaleTimeString();
+      const display = document.getElementById(`${type}-${index}`);
+      display.innerText = `${time} (${userId})`;
+    }
+  </script>
+</body>
 </html>
