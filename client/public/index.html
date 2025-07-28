@@ -10,6 +10,8 @@
   <div class="container">
     <h1>Velana Arrivals Departure Assistant (VADA)</h1>
 
+    <button id="updateBtn">🔄 Update Flights</button>
+
     <div class="loader">Loading flights...</div>
 
     <table style="display: none">
@@ -17,11 +19,9 @@
         <tr>
           <th>Airline</th>
           <th>Flight</th>
-          <th>Origin</th>
+          <th>Route</th>
           <th>STA</th>
           <th>ETD</th>
-          <th>Gate</th>
-          <th>Bay</th>
           <th>Status</th>
           <th>SS</th>
           <th>BUS</th>
@@ -40,6 +40,7 @@
     const loader = document.querySelector(".loader");
     const noFlights = document.querySelector(".no-flights");
     const tbody = document.getElementById("flight-body");
+    const updateBtn = document.getElementById("updateBtn");
 
     let userId = localStorage.getItem("userId");
     let storedTime = localStorage.getItem("userIdTime");
@@ -53,53 +54,65 @@
       }
     }
 
-    fetch("https://vada-2db9.onrender.com/flights")
-      .then(res => res.json())
-      .then(flights => {
-        loader.style.display = "none";
+    function loadFlights() {
+      loader.style.display = "block";
+      table.style.display = "none";
+      noFlights.style.display = "none";
+      tbody.innerHTML = "";
 
-        if (!flights.length) {
-          noFlights.style.display = "block";
-          return;
-        }
+      fetch("https://vada-2db9.onrender.com/flights")
+        .then(res => res.json())
+        .then(flights => {
+          loader.style.display = "none";
 
-        table.style.display = "table";
+          if (!flights.length) {
+            noFlights.style.display = "block";
+            return;
+          }
 
-        flights.forEach((flight, index) => {
-          const tr = document.createElement("tr");
+          table.style.display = "table";
 
-          tr.innerHTML = `
-            <td>${flight.airline}</td>
-            <td>${flight.flightNo}</td>
-            <td>${flight.origin}</td>
-            <td>${flight.sta}</td>
-            <td>${flight.etd}</td>
-            <td>${flight.gate}</td>
-            <td>${flight.bay}</td>
-            <td>${flight.status}</td>
-            <td>
-              <button onclick="handleCall(${index}, 'ss')">SS</button>
-              <div class="call-time" id="ss-${index}"></div>
-            </td>
-            <td>
-              <button onclick="handleCall(${index}, 'bus')">BUS</button>
-              <div class="call-time" id="bus-${index}"></div>
-            </td>
-          `;
+          flights.forEach((flight, index) => {
+            const tr = document.createElement("tr");
 
-          tbody.appendChild(tr);
+            tr.innerHTML = `
+              <td>${flight.airline || '—'}</td>
+              <td>${flight.flightNo || flight.flight || '—'}</td>
+              <td>${flight.origin || flight.route || '—'}</td>
+              <td>${flight.sta || flight.scheduledTime || '—'}</td>
+              <td>${flight.etd || flight.estimatedTime || '—'}</td>
+              <td>${flight.status || '—'}</td>
+              <td>
+                <button onclick="handleCall(${index}, 'ss')">SS</button>
+                <div class="call-time" id="ss-${index}"></div>
+              </td>
+              <td>
+                <button onclick="handleCall(${index}, 'bus')">BUS</button>
+                <div class="call-time" id="bus-${index}"></div>
+              </td>
+            `;
+
+            tbody.appendChild(tr);
+          });
+        })
+        .catch(err => {
+          console.error("Error fetching flights:", err);
+          loader.innerText = "Error loading flights.";
         });
-      })
-      .catch(err => {
-        console.error("Error fetching flights:", err);
-        loader.innerText = "Error loading flights.";
-      });
+    }
 
     function handleCall(index, type) {
       const time = new Date().toLocaleTimeString();
       const display = document.getElementById(`${type}-${index}`);
       display.innerText = `${time} (${userId})`;
     }
+
+    updateBtn.addEventListener("click", () => {
+      loadFlights();
+    });
+
+    // Initial load
+    loadFlights();
   </script>
 </body>
 </html>
