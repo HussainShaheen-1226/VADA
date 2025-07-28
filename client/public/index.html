@@ -54,6 +54,15 @@
       }
     }
 
+    function getAirline(flightNo) {
+      if (!flightNo) return '—';
+      const code = flightNo.slice(0, 2).toUpperCase();
+      if (code === 'Q2') return 'Maldivian';
+      if (code === 'NR') return 'Manta Air';
+      if (code === 'VP') return 'Villa Air';
+      return '—';
+    }
+
     function loadFlights() {
       loader.style.display = "block";
       table.style.display = "none";
@@ -73,11 +82,14 @@
           table.style.display = "table";
 
           flights.forEach((flight, index) => {
+            const flightNo = flight.flightNo || flight.flight || '';
+            const airline = getAirline(flightNo);
+
             const tr = document.createElement("tr");
 
             tr.innerHTML = `
-              <td>${flight.airline || '—'}</td>
-              <td>${flight.flightNo || flight.flight || '—'}</td>
+              <td>${airline}</td>
+              <td>${flightNo || '—'}</td>
               <td>${flight.origin || flight.route || '—'}</td>
               <td>${flight.sta || flight.scheduledTime || '—'}</td>
               <td>${flight.etd || flight.estimatedTime || '—'}</td>
