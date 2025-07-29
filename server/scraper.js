@@ -1,69 +1,52 @@
 import { chromium } from 'playwright';
-import express from 'express';
-import cors from 'cors';
+import fs from 'fs';
+import path from 'path';
 
-const app = express();
-app.use(cors());
-
-let cachedData = [];
-let lastUpdated = 0;
+const OUTPUT_FILE = path.resolve('./flights.json');
 
 async function scrapeFlights() {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
 
-  await page.goto('https://www.fis.com.mv', { waitUntil: 'networkidle' });
+  try {
+    await page.goto('https://www.fis.com.mv', { timeout: 60000 });
 
-  const data = await page.evaluate(() => {
-    const rows = Array.from(document.querySelectorAll('.table tbody tr'));
-    return rows.map(row => {
-      const cols = row.querySelectorAll('td');
-      if (cols.length < 5) return null;
+    await page.waitForSelector('.arrivals tbody tr');
 
-      const flightNo = cols[0].innerText.trim();
-      const origin = cols[1].innerText.trim();
-      const sta = cols[2].innerText.trim();
-      const etd = cols[3].innerText.trim();
-      const status = cols[4].innerText.trim();
+    const flights = await page.$$eval('.arrivals tbody tr', rows => {
+      return rows.map(row => {
+        const cols = Array.from(row.querySelectorAll('td')).map(td => td.textContent.trim());
 
-      // Infer airline from flight number prefix
-      let airline = 'Unknown';
-      if (flightNo.startsWith('Q2')) airline = 'Maldivian';
-      else if (flightNo.startsWith('VP')) airline = 'Villa Air';
-      else if (flightNo.startsWith('NR')) airline = 'Manta Air';
+        const [flightNo, origin, sta, etd, statusRaw] = cols;
 
-      return {
-        airline,
-        flightNo,
-        route: origin,
-        sta,
-        etd,
-        status
-      };
-    }).filter(flight => flight !== null);
-  });
+        // Infer airline from flight number
+        let airline = '';
+        if (flightNo.startsWith('Q2')) airline = 'Maldivian';
+        else if (flightNo.startsWith('NR')) airline = 'Manta Air';
+        else if (flightNo.startsWith('VP')) airline = 'Villa Air';
 
-  await browser.close();
-  return data;
+        return {
+          airline,
+          flightNo,
+          route: origin,
+          sta,
+          etd,
+          status: statusRaw || 'N/A'
+        };
+      });
+    });
+
+    fs.writeFileSync(OUTPUT_FILE, JSON.stringify(flights, null, 2));
+    console.log(`✅ Flights scraped and saved (${flights.length})`);
+
+  } catch (err) {
+    console.error('❌ Error scraping:', err);
+  } finally {
+    await browser.close();
+  }
 }
 
-// Route to serve scraped data
-app.get('/flights', async (req, res) => {
-  const now = Date.now();
-  if (now - lastUpdated > 60 * 1000) {
-    try {
-      cachedData = await scrapeFlights();
-      lastUpdated = now;
-    } catch (err) {
-      console.error('Scraping failed:', err);
-      return res.status(500).json({ error: 'Failed to fetch flights' });
-    }
-  }
+scrapeFlights();
 
-  res.json(cachedData);
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
-});
+// Schedule every 60 seconds
+setInterval(scrapeFlights, 60 * 1000);
