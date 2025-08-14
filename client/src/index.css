@@ -1,99 +1,66 @@
-/* client/src/index.css */
+:root {
+  --bg: #0b1020;
+  --panel: rgba(255,255,255,0.06);
+  --card: rgba(255,255,255,0.08);
+  --text: #fff;
+  --muted: #cfd3dc;
+  --accent: #ffd54a; /* yellow */
+  --green: #5bd089;
+  --red: #ff6b6b;
+  --blue: #66b0ff;
+}
 
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; }
 body {
-  margin: 0;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  color: white;
-  background-color: #1c1c1c;
+  margin: 0; color: var(--text); background: var(--bg);
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji", "Segoe UI Emoji";
 }
 
-.container {
-  max-width: 1000px;
-  margin: 0 auto;
-  padding: 20px;
-  background-color: rgba(30, 30, 30, 0.85);
-  border-radius: 12px;
-  box-shadow: 0 0 12px rgba(0, 0, 0, 0.4);
+.container { max-width: 1200px; margin: 0 auto; padding: 16px; }
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; background: var(--panel); border-radius: 12px; margin-bottom: 12px;
+  backdrop-filter: blur(6px);
+}
+.topbar h1 { font-size: 18px; margin: 0; font-weight: 600; }
+.live-dot { font-size: 12px; padding: 4px 10px; border-radius: 999px; background: #3b4157; }
+.live-dot.on { background: var(--green); color: #05140c; }
+.live-dot.off { background: var(--red); }
+
+.table-wrap {
+  background: var(--card); border-radius: 12px; overflow: hidden; border: 1px solid rgba(255,255,255,0.08);
 }
 
-.title {
-  text-align: center;
-  font-size: 2em;
-  margin-bottom: 25px;
-  color: white;
+.vada-table { width: 100%; border-collapse: collapse; }
+.vada-table thead th {
+  position: sticky; top: 0; background: rgba(0,0,0,0.25); backdrop-filter: blur(4px);
+  text-align: left; font-weight: 600; padding: 12px 14px; font-size: 13px;
 }
-
-.flight-table {
-  width: 100%;
-  border-collapse: collapse;
-  background-color: rgba(255, 255, 255, 0.03);
-  border-radius: 10px;
-  overflow: hidden;
+.vada-table tbody td {
+  padding: 12px 14px; border-top: 1px solid rgba(255,255,255,0.07); font-size: 14px;
 }
+.vada-table tbody tr:hover { background: rgba(255,255,255,0.05); }
 
-.flight-table th,
-.flight-table td {
-  padding: 12px 16px;
-  text-align: center;
-  border-bottom: 1px solid #444;
-  color: white;
+.status { padding: 4px 10px; border-radius: 999px; background: #2a2f43; font-size: 12px; }
+.status.landed { background: var(--green); color: #082310; }
+.status.delayed { background: var(--red); }
+.status.cancelled { background: #999; color: #111; }
+.status.boarding, .status.ontime { background: var(--blue); }
+
+.btn {
+  display: inline-block; text-decoration: none; font-weight: 700;
+  padding: 6px 12px; border-radius: 8px; font-size: 13px; line-height: 1;
+  border: 1px solid rgba(0,0,0,0.2); box-shadow: 0 1px 0 rgba(255,255,255,0.1) inset;
 }
+.btn.ss  { background: var(--accent); color: #1b1400; }
+.btn.bus { background: var(--accent); color: #1b1400; margin-left: 4px; }
 
-.flight-table th {
-  background-color: #2c2c2c;
-  font-weight: 600;
-}
+.stamp { font-size: 11px; opacity: .75; margin-top: 6px; }
 
-.flight-table tr:hover {
-  background-color: #333;
-}
-
-.call-btn {
-  padding: 6px 14px;
-  border: none;
-  border-radius: 6px;
-  font-weight: bold;
-  cursor: pointer;
-  transition: background-color 0.3s ease;
-}
-
-.call-btn.ss {
-  background-color: #ffcc00;
-  color: black;
-}
-
-.call-btn.bus {
-  background-color: #ffcc00;
-  color: black;
-}
-
-.call-btn:hover {
-  filter: brightness(0.9);
-}
-
-.call-time {
-  font-size: 0.8em;
-  margin-top: 4px;
-  color: #ccc;
-}
-
-.loader,
-.no-flights {
-  text-align: center;
-  font-size: 1.2em;
-  margin-top: 30px;
-  color: #fff;
-}
-
-@media screen and (max-width: 768px) {
-  .flight-table th,
-  .flight-table td {
-    padding: 8px 6px;
-    font-size: 0.8em;
-  }
-
-  .call-btn {
-    padding: 5px 10px;
-    font-size: 0.8em;
-  }
+.muted { color: var(--muted); text-align: center; padding: 24px; }
+@media (max-width: 720px) {
+  .vada-table thead th, .vada-table tbody td { padding: 10px 12px; font-size: 13px; }
+  .topbar { flex-direction: column; gap: 8px; align-items: flex-start; }
 }
