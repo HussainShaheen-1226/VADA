@@ -1,128 +1,95 @@
-// client/src/App.js
-import React, { useEffect, useState } from 'react';
-import './index.css';
+import { useEffect, useState, useMemo } from 'react';
 
-function App() {
+const API = 'https://vada-2db9.onrender.com';
+
+export default function App() {
   const [flights, setFlights] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [userId, setUserId] = useState('');
-  const [callTimes, setCallTimes] = useState({});
+  const [connected, setConnected] = useState(false);
+  const [callTimes, setCallTimes] = useState({}); // { "<flightNo>": { ss: "...", bus: "..." } }
+
+  // Normalize once (guards against undefined keys)
+  const rows = useMemo(() => (Array.isArray(flights) ? flights : []), [flights]);
+
+  async function loadFlights() {
+    try {
+      const res = await fetch(`${API}/flights`, { cache: 'no-store' });
+      setFlights(await res.json());
+    } catch {/* ignore */}
+  }
 
   useEffect(() => {
-    const storedId = localStorage.getItem('userId');
-    const storedTime = localStorage.getItem('userIdTime');
-    const now = new Date().getTime();
-
-    if (!storedId || !storedTime || now - parseInt(storedTime) > 14 * 24 * 60 * 60 * 1000) {
-      const newId = prompt('Enter your ID:');
-      if (newId) {
-        localStorage.setItem('userId', newId);
-        localStorage.setItem('userIdTime', now.toString());
-        setUserId(newId);
-      }
-    } else {
-      setUserId(storedId);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetch('https://vada-2db9.onrender.com/flights')
-      .then(res => res.json())
-      .then(data => {
-        setFlights(data);
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error('Error fetching flights:', err);
-        setLoading(false);
-      });
-  }, []);
-
-  const handleCall = (id, type) => {
-    const time = new Date().toLocaleTimeString();
-    const updated = {
-      ...callTimes,
-      [id]: { ...(callTimes[id] || {}), [type]: `${time} (${userId})` }
+    loadFlights(); // initial
+    const ev = new EventSource(`${API}/events`);
+    ev.onopen = () => setConnected(true);
+    ev.onmessage = async (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'changed') await loadFlights();
+      } catch {/* ignore */}
     };
-    setCallTimes(updated);
+    ev.onerror = () => setConnected(false);
+    const fallback = setInterval(loadFlights, 60000); // safety
+    return () => { ev.close(); clearInterval(fallback); };
+  }, []);
 
-    // Send to backend (optional)
-    fetch('https://vada-2db9.onrender.com/api/call-logs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userId,
-        flight: flights[id]?.flightNo || '',
-        type,
-        timestamp: new Date().toISOString(),
-      }),
-    });
-  };
+  function stampCall(flightNo, type) {
+    const stamp = new Date().toLocaleTimeString();
+    setCallTimes(prev => ({
+      ...prev,
+      [flightNo]: { ...(prev[flightNo] || {}), [type]: stamp }
+    }));
+  }
+
+  const ssTel  = 'tel:+9603337100';
+  const busTel = 'tel:+9603337253';
 
   return (
-    <div
-      className="app-wrapper"
-      style={{
-        backgroundImage: `url(${process.env.PUBLIC_URL + '/background.png'})`,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-        minHeight: '100vh',
-        padding: '20px',
-      }}
-    >
-      <div className="container">
-        <h1 className="title">Velana Arrivals Departure Assistant (VADA)</h1>
-        {loading ? (
-          <div className="loader">Loading flights...</div>
-        ) : flights.length === 0 ? (
-          <div className="no-flights">No flights available</div>
-        ) : (
-          <table className="flight-table">
-            <thead>
-              <tr>
-                <th>Airline</th>
-                <th>Flight</th>
-                <th>Origin</th>
-                <th>STA</th>
-                <th>ETD</th>
-                <th>Gate</th>
-                <th>Bay</th>
-                <th>Status</th>
-                <th>SS</th>
-                <th>BUS</th>
+    <div className="container">
+      <header className="topbar">
+        <h1>VADA — Velana Arrivals & Departure Assistant</h1>
+        <div className={`live-dot ${connected ? 'on' : 'off'}`}>
+          {connected ? 'live' : 'offline'}
+        </div>
+      </header>
+
+      <div className="table-wrap">
+        <table className="vada-table">
+          <thead>
+            <tr>
+              <th>Airline</th>
+              <th>Flight</th>
+              <th>Route</th>
+              <th>STA</th>
+              <th>ETD</th>
+              <th>Status</th>
+              <th>SS</th>
+              <th>BUS</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr><td colSpan={8} className="muted">No flights</td></tr>
+            ) : rows.map((f) => (
+              <tr key={`${f.flightNo}-${f.sta}`}>
+                <td>{f.airline}</td>
+                <td>{f.flightNo}</td>
+                <td>{f.route}</td>
+                <td>{f.sta}</td>
+                <td>{f.etd}</td>
+                <td><span className={`status ${f.status?.toLowerCase() || ''}`}>{f.status}</span></td>
+                <td>
+                  <a className="btn ss" href={ssTel} onClick={() => stampCall(f.flightNo, 'ss')}>SS</a>
+                  <div className="stamp">{callTimes[f.flightNo]?.ss || ''}</div>
+                </td>
+                <td>
+                  <a className="btn bus" href={busTel} onClick={() => stampCall(f.flightNo, 'bus')}>BUS</a>
+                  <div className="stamp">{callTimes[f.flightNo]?.bus || ''}</div>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {flights.map((flight, index) => (
-                <tr key={index}>
-                  <td>{flight.airline}</td>
-                  <td>{flight.flightNo}</td>
-                  <td>{flight.origin}</td>
-                  <td>{flight.sta}</td>
-                  <td>{flight.etd}</td>
-                  <td>{flight.gate}</td>
-                  <td>{flight.bay}</td>
-                  <td>{flight.status}</td>
-                  <td>
-                    <button className="call-btn ss" onClick={() => handleCall(index, 'ss')}>
-                      SS
-                    </button>
-                    <div className="call-time">{callTimes[index]?.ss}</div>
-                  </td>
-                  <td>
-                    <button className="call-btn bus" onClick={() => handleCall(index, 'bus')}>
-                      BUS
-                    </button>
-                    <div className="call-time">{callTimes[index]?.bus}</div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
 }
-
-export default App;
