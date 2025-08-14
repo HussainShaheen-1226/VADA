@@ -3,7 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
-import { chromium } from 'playwright';
+import crypto from 'crypto';
 
 dotenv.config();
 
@@ -18,179 +18,207 @@ const DOMESTIC_ARRIVALS_URL =
   'https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=D&webfids_lang=1&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL';
 
 const UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121 Safari/537.36';
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36';
 
-/* ---------------------- In-memory store ---------------------- */
+/* ---------------------- In-memory state ---------------------- */
 let flightsCache = [];
-let lastScrapeAt = null;
+let lastUpdatedAt = null;
 let lastError = null;
+let lastHash = '';
+let etag = null;
+let lastModified = null;
+
+/* Adaptive schedule (in ms) */
+const FAST = 30_000;     // 30s while changing
+const MED  = 60_000;     // 1m
+const SLOW = 300_000;    // 5m when stable
+let currentInterval = FAST;
+let timer = null;
+
+/* SSE clients */
+const sseClients = new Set();
 
 /* ---------------------- Helpers ---------------------- */
-function airlineFromFlight(flightNo = '') {
+const airlineFromFlight = (flightNo = '') => {
   const up = (flightNo || '').toUpperCase();
   if (up.startsWith('Q2')) return 'Maldivian';
   if (up.startsWith('NR')) return 'Manta Air';
   if (up.startsWith('VP')) return 'Villa Air';
   return 'Unknown';
+};
+
+const mapRowToSchema = ({ flight, from, time, estm, status }) => ({
+  airline: airlineFromFlight(flight),
+  flightNo: flight || '',
+  route: from || '',
+  sta: time || '',
+  etd: estm || '',
+  status: status || '',
+});
+
+const hashOf = (str) => crypto.createHash('sha256').update(str).digest('hex');
+
+function schedule(nextMs) {
+  if (timer) clearTimeout(timer);
+  currentInterval = nextMs;
+  timer = setTimeout(tick, currentInterval);
 }
 
-function mapRawRow({ flight, from, time, estm, status }) {
-  return {
-    airline: airlineFromFlight(flight),
-    flightNo: flight || '',
-    route: from || '',
-    sta: time || '',
-    etd: estm || '',
-    status: status || '',
-  };
-}
-
-/* ---------------------- Primary: Axios + Cheerio ---------------------- */
-async function scrapeWithCheerio() {
-  const res = await axios.get(DOMESTIC_ARRIVALS_URL, {
-    headers: { 'User-Agent': UA, Accept: 'text/html' },
-    timeout: 30000,
-  });
-  const $ = cheerio.load(res.data);
-
-  const rows = $('tr.schedulerow, tr.schedulerowtwo');
-  const out = [];
-  rows.each((i, row) => {
-    const tds = $(row).find('td');
-    if (tds.length >= 5) {
-      const flight = $(tds[0]).text().trim();
-      const from = $(tds[1]).text().trim();
-      const time = $(tds[2]).text().trim();
-      const estm = $(tds[3]).text().trim();
-      const status = $(tds[4]).text().trim();
-
-      const up = (flight || '').toUpperCase();
-      if (up.startsWith('Q2') || up.startsWith('NR') || up.startsWith('VP')) {
-        out.push(mapRawRow({ flight, from, time, estm, status }));
-      }
-    }
-  });
-  return out;
-}
-
-/* ---------------------- Fallback: Playwright ---------------------- */
-async function scrapeWithPlaywright() {
-  let browser;
-  try {
-    browser = await chromium.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    });
-    const page = await browser.newPage();
-    await page.setUserAgent(UA);
-    await page.goto(DOMESTIC_ARRIVALS_URL, {
-      waitUntil: 'domcontentloaded',
-      timeout: 60000,
-    });
-
-    await page.waitForSelector('tr.schedulerow, tr.schedulerowtwo', {
-      timeout: 30000,
-    });
-
-    const rows = await page.$$eval(
-      'tr.schedulerow, tr.schedulerowtwo',
-      (trs) => {
-        const clean = (t) => (t || '').replace(/\s+/g, ' ').trim();
-        const result = [];
-        trs.forEach((tr) => {
-          const tds = Array.from(tr.querySelectorAll('td')).map((td) =>
-            clean(td.textContent)
-          );
-          if (tds.length >= 5) {
-            result.push({
-              flight: tds[0] || '',
-              from: tds[1] || '',
-              time: tds[2] || '',
-              estm: tds[3] || '',
-              status: tds[4] || '',
-            });
-          }
-        });
-        return result;
-      }
-    );
-
-    const filtered = rows.filter((r) => {
-      const f = (r.flight || '').toUpperCase();
-      return f.startsWith('Q2') || f.startsWith('NR') || f.startsWith('VP');
-    });
-
-    return filtered.map(mapRawRow);
-  } finally {
-    try {
-      await browser?.close();
-    } catch {}
+function notifyClients(payload) {
+  const data = `data: ${JSON.stringify(payload)}\n\n`;
+  for (const res of sseClients) {
+    try { res.write(data); } catch { /* ignore broken pipe */ }
   }
 }
 
-/* ---------------------- Unified scrape orchestrator ---------------------- */
-async function scrapeFlights() {
-  const start = Date.now();
-  console.log(`[SCRAPE] start ${new Date(start).toISOString()}`);
+/* ---------------------- Scrape once with conditional request ---------------------- */
+async function scrapeOnce() {
+  const started = Date.now();
   lastError = null;
 
   try {
-    // 1) Try Cheerio first (fast & reliable)
-    const cheerioData = await scrapeWithCheerio();
-    console.log(`[SCRAPE] cheerio rows=${cheerioData.length}`);
-    if (cheerioData.length > 0) {
-      flightsCache = cheerioData;
-      lastScrapeAt = new Date();
-      return;
+    const headers = {
+      'User-Agent': UA,
+      'Accept': 'text/html',
+    };
+    if (etag) headers['If-None-Match'] = etag;
+    if (lastModified) headers['If-Modified-Since'] = lastModified;
+
+    const resp = await axios.get(DOMESTIC_ARRIVALS_URL, {
+      headers,
+      validateStatus: (s) => [200, 304].includes(s),
+      timeout: 30000,
+    });
+
+    // 304 → no change
+    if (resp.status === 304) {
+      console.log(`[SCRAPE] 304 Not Modified in ${Date.now() - started}ms`);
+      schedule(Math.min(SLOW, currentInterval * 2));
+      return false;
     }
 
-    // 2) If cheerio failed or 0, try Playwright fallback
-    const pwData = await scrapeWithPlaywright();
-    console.log(`[SCRAPE] playwright rows=${pwData.length}`);
-    flightsCache = pwData;
-    lastScrapeAt = new Date();
+    // 200 → may have changed
+    etag = resp.headers.etag || etag;
+    lastModified = resp.headers['last-modified'] || lastModified;
+
+    const html = resp.data || '';
+    const $ = cheerio.load(html);
+
+    // Hash either the specific rows' parent HTML or whole HTML (fallback)
+    const maybeParent = $('tr.schedulerow, tr.schedulerowtwo').first().parent();
+    const tableHtml = (maybeParent && maybeParent.length ? maybeParent.html() : '') || html;
+    const newHash = hashOf(tableHtml);
+
+    if (newHash === lastHash) {
+      console.log(`[SCRAPE] 200 but content hash unchanged in ${Date.now() - started}ms`);
+      schedule(Math.min(SLOW, currentInterval * 2));
+      return false;
+    }
+
+    // Parse rows
+    const rows = $('tr.schedulerow, tr.schedulerowtwo');
+    const parsed = [];
+    rows.each((_, row) => {
+      const tds = $(row).find('td');
+      if (tds.length >= 5) {
+        const flight = $(tds[0]).text().trim();
+        const from   = $(tds[1]).text().trim();
+        const time   = $(tds[2]).text().trim(); // STA
+        const estm   = $(tds[3]).text().trim(); // ESTM
+        const status = $(tds[4]).text().trim();
+
+        const fUp = (flight || '').toUpperCase();
+        // Keep only domestic carriers you track (Q2/NR/VP)
+        if (fUp.startsWith('Q2') || fUp.startsWith('NR') || fUp.startsWith('VP')) {
+          parsed.push(mapRowToSchema({ flight, from, time, estm, status }));
+        }
+      }
+    });
+
+    // Sort for stable hashing/diffs
+    parsed.sort((a, b) => (a.flightNo + a.sta).localeCompare(b.flightNo + b.sta));
+
+    flightsCache = parsed;
+    lastHash = newHash;
+    lastUpdatedAt = new Date();
+
+    console.log(
+      `[SCRAPE] CHANGED rows=${parsed.length} in ${Date.now() - started}ms @ ${lastUpdatedAt.toISOString()}`
+    );
+
+    // on change, go fast again and notify clients
+    schedule(FAST);
+    notifyClients({ type: 'changed', updatedAt: lastUpdatedAt, count: flightsCache.length });
+    return true;
   } catch (err) {
     lastError = String(err?.message || err);
     console.error('[SCRAPE] ERROR:', lastError);
-  } finally {
-    console.log(
-      `[SCRAPE] done in ${Math.round(Date.now() - start)}ms, cached=${flightsCache.length}`
-    );
+    schedule(MED);
+    return false;
   }
 }
 
-/* ---------------------- Kick off + schedule ---------------------- */
-await scrapeFlights();
-setInterval(scrapeFlights, 60 * 1000); // every minute
+/* ---------------------- Scheduler ---------------------- */
+async function tick() {
+  await scrapeOnce();
+}
+
+/* Boot: run once, then schedule */
+await scrapeOnce();
+schedule(FAST);
 
 /* ---------------------- API ---------------------- */
-app.get('/', (req, res) => {
-  res.send('VADA backend is running');
+app.get('/', (_req, res) => {
+  res.send('VADA backend running (conditional scraping + SSE)');
 });
 
-app.get('/flights', (req, res) => {
+app.get('/meta', (_req, res) => {
+  res.json({
+    hash: lastHash,
+    count: flightsCache.length,
+    updatedAt: lastUpdatedAt,
+    lastError,
+    etag,
+    lastModified,
+    intervalMs: currentInterval,
+  });
+});
+
+app.get('/flights', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
   res.json(flightsCache);
 });
 
-app.get('/refresh', async (req, res) => {
-  await scrapeFlights();
+app.post('/refresh', async (_req, res) => {
+  const changed = await scrapeOnce();
   res.json({
     ok: true,
+    changed,
+    hash: lastHash,
     count: flightsCache.length,
-    lastScrapeAt,
+    updatedAt: lastUpdatedAt,
     lastError,
   });
 });
 
-app.get('/debug', (req, res) => {
-  res.json({
-    count: flightsCache.length,
-    lastScrapeAt,
-    lastError,
-    sample: flightsCache.slice(0, 5),
-  });
+/* ---------- Server-Sent Events: push change notifications ---------- */
+app.get('/events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  // Send current state immediately
+  res.write(`data: ${JSON.stringify({
+    type: 'hello',
+    updatedAt: lastUpdatedAt,
+    count: flightsCache.length
+  })}\n\n`);
+
+  sseClients.add(res);
+  req.on('close', () => sseClients.delete(res));
 });
 
 app.listen(PORT, () => {
-  console.log(`✅ Backend running on port ${PORT}`);
+  console.log(`✅ Backend listening on :${PORT}`);
 });
