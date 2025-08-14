@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import axios from 'axios';
+import * as cheerio from 'cheerio';
 import { chromium } from 'playwright';
 
 dotenv.config();
@@ -11,122 +13,175 @@ const PORT = process.env.PORT || 10000;
 app.use(cors());
 app.use(express.json());
 
-// ========== In-memory store ==========
+/* ---------------------- Config ---------------------- */
+const DOMESTIC_ARRIVALS_URL =
+  'https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=D&webfids_lang=1&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL';
+
+const UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121 Safari/537.36';
+
+/* ---------------------- In-memory store ---------------------- */
 let flightsCache = [];
 let lastScrapeAt = null;
 let lastError = null;
 
-// Helper: airline name by prefix
+/* ---------------------- Helpers ---------------------- */
 function airlineFromFlight(flightNo = '') {
-  const up = flightNo.trim().toUpperCase();
+  const up = (flightNo || '').toUpperCase();
   if (up.startsWith('Q2')) return 'Maldivian';
   if (up.startsWith('NR')) return 'Manta Air';
   if (up.startsWith('VP')) return 'Villa Air';
   return 'Unknown';
 }
 
-// Core scraper (DOMESTIC ARRIVALS)
-async function scrapeFlights() {
-  const startTs = new Date();
-  console.log(`[SCRAPER] Start ${startTs.toISOString()}`);
-  let browser;
+function mapRawRow({ flight, from, time, estm, status }) {
+  return {
+    airline: airlineFromFlight(flight),
+    flightNo: flight || '',
+    route: from || '',
+    sta: time || '',
+    etd: estm || '',
+    status: status || '',
+  };
+}
 
+/* ---------------------- Primary: Axios + Cheerio ---------------------- */
+async function scrapeWithCheerio() {
+  const res = await axios.get(DOMESTIC_ARRIVALS_URL, {
+    headers: { 'User-Agent': UA, Accept: 'text/html' },
+    timeout: 30000,
+  });
+  const $ = cheerio.load(res.data);
+
+  const rows = $('tr.schedulerow, tr.schedulerowtwo');
+  const out = [];
+  rows.each((i, row) => {
+    const tds = $(row).find('td');
+    if (tds.length >= 5) {
+      const flight = $(tds[0]).text().trim();
+      const from = $(tds[1]).text().trim();
+      const time = $(tds[2]).text().trim();
+      const estm = $(tds[3]).text().trim();
+      const status = $(tds[4]).text().trim();
+
+      const up = (flight || '').toUpperCase();
+      if (up.startsWith('Q2') || up.startsWith('NR') || up.startsWith('VP')) {
+        out.push(mapRawRow({ flight, from, time, estm, status }));
+      }
+    }
+  });
+  return out;
+}
+
+/* ---------------------- Fallback: Playwright ---------------------- */
+async function scrapeWithPlaywright() {
+  let browser;
   try {
     browser = await chromium.launch({
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
     });
     const page = await browser.newPage();
-
-    // Some sites block default UA; set a desktop UA
-    await page.setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121 Safari/537.36'
-    );
-
-    // Direct DOMESTIC arrivals URL (no UI clicks required)
-    const DOMESTIC_ARRIVALS =
-      'https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=D&webfids_lang=1&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL';
-
-    await page.goto(DOMESTIC_ARRIVALS, { waitUntil: 'domcontentloaded', timeout: 60000 });
-
-    // Wait for the legacy rows (two alternating classes)
-    await page.waitForSelector('tr.schedulerow, tr.schedulerowtwo', { timeout: 30000 });
-
-    // Extract rows safely
-    const rows = await page.$$eval('tr.schedulerow, tr.schedulerowtwo', (trs) => {
-      const clean = (t) => (t || '').replace(/\s+/g, ' ').trim();
-      const flights = [];
-
-      trs.forEach((tr) => {
-        const tds = Array.from(tr.querySelectorAll('td')).map((td) => clean(td.textContent));
-        // Expected order on FIS domestic arrivals typically:
-        // 0=Flight, 1=From, 2=Time (STA), 3=ESTM (ETD), 4=Status
-        if (tds.length >= 5) {
-          const flight = tds[0] || '';
-          const from = tds[1] || '';
-          const time = tds[2] || '';
-          const estm = tds[3] || '';
-          const status = tds[4] || '';
-
-          flights.push({ flight, from, time, estm, status });
-        }
-      });
-
-      return flights;
+    await page.setUserAgent(UA);
+    await page.goto(DOMESTIC_ARRIVALS_URL, {
+      waitUntil: 'domcontentloaded',
+      timeout: 60000,
     });
 
-    // Filter to Q2 / NR / VP only
+    await page.waitForSelector('tr.schedulerow, tr.schedulerowtwo', {
+      timeout: 30000,
+    });
+
+    const rows = await page.$$eval(
+      'tr.schedulerow, tr.schedulerowtwo',
+      (trs) => {
+        const clean = (t) => (t || '').replace(/\s+/g, ' ').trim();
+        const result = [];
+        trs.forEach((tr) => {
+          const tds = Array.from(tr.querySelectorAll('td')).map((td) =>
+            clean(td.textContent)
+          );
+          if (tds.length >= 5) {
+            result.push({
+              flight: tds[0] || '',
+              from: tds[1] || '',
+              time: tds[2] || '',
+              estm: tds[3] || '',
+              status: tds[4] || '',
+            });
+          }
+        });
+        return result;
+      }
+    );
+
     const filtered = rows.filter((r) => {
       const f = (r.flight || '').toUpperCase();
       return f.startsWith('Q2') || f.startsWith('NR') || f.startsWith('VP');
     });
 
-    // Map to your UI schema
-    const mapped = filtered.map((r) => ({
-      airline: airlineFromFlight(r.flight),
-      flightNo: r.flight,
-      route: r.from,      // "Origin" -> "Route"
-      sta: r.time,        // Time
-      etd: r.estm,        // ESTM
-      status: r.status,   // Status text ("Landed", "Delayed", etc.)
-    }));
-
-    flightsCache = mapped;
-    lastScrapeAt = new Date();
-    lastError = null;
-
-    console.log(
-      `[SCRAPER] OK rows=${rows.length} filtered=${mapped.length} at ${lastScrapeAt.toISOString()}`
-    );
-  } catch (err) {
-    console.error('[SCRAPER] ERROR:', err?.message || err);
-    lastError = String(err?.message || err);
+    return filtered.map(mapRawRow);
   } finally {
-    try { await browser?.close(); } catch {}
+    try {
+      await browser?.close();
+    } catch {}
   }
 }
 
-// Kick one scrape at boot, then every minute
-scrapeFlights();
-setInterval(scrapeFlights, 60 * 1000);
+/* ---------------------- Unified scrape orchestrator ---------------------- */
+async function scrapeFlights() {
+  const start = Date.now();
+  console.log(`[SCRAPE] start ${new Date(start).toISOString()}`);
+  lastError = null;
 
-// ========== API ==========
+  try {
+    // 1) Try Cheerio first (fast & reliable)
+    const cheerioData = await scrapeWithCheerio();
+    console.log(`[SCRAPE] cheerio rows=${cheerioData.length}`);
+    if (cheerioData.length > 0) {
+      flightsCache = cheerioData;
+      lastScrapeAt = new Date();
+      return;
+    }
+
+    // 2) If cheerio failed or 0, try Playwright fallback
+    const pwData = await scrapeWithPlaywright();
+    console.log(`[SCRAPE] playwright rows=${pwData.length}`);
+    flightsCache = pwData;
+    lastScrapeAt = new Date();
+  } catch (err) {
+    lastError = String(err?.message || err);
+    console.error('[SCRAPE] ERROR:', lastError);
+  } finally {
+    console.log(
+      `[SCRAPE] done in ${Math.round(Date.now() - start)}ms, cached=${flightsCache.length}`
+    );
+  }
+}
+
+/* ---------------------- Kick off + schedule ---------------------- */
+await scrapeFlights();
+setInterval(scrapeFlights, 60 * 1000); // every minute
+
+/* ---------------------- API ---------------------- */
 app.get('/', (req, res) => {
   res.send('VADA backend is running');
 });
 
-// frontend uses this
 app.get('/flights', (req, res) => {
   res.json(flightsCache);
 });
 
-// Manual trigger + health info
 app.get('/refresh', async (req, res) => {
   await scrapeFlights();
-  res.json({ ok: true, count: flightsCache.length, lastScrapeAt, lastError });
+  res.json({
+    ok: true,
+    count: flightsCache.length,
+    lastScrapeAt,
+    lastError,
+  });
 });
 
-// Debug info to see what’s going on
 app.get('/debug', (req, res) => {
   res.json({
     count: flightsCache.length,
