@@ -1,8 +1,9 @@
+// server/scraper.js
 // HTML-table parser first (preferred), with text-mode fallback helpers.
 
 import * as cheerio from 'cheerio';
 
-// Utilities
+// ---------- utils ----------
 function clean(s) {
   return String(s || '')
     .replace(/\u00a0/g, ' ')
@@ -20,7 +21,7 @@ export function extractUpdatedLT(text) {
   return m ? m[1].trim() : null;
 }
 
-// --------- PRIMARY: parse from HTML tables ----------
+// ---------- PRIMARY: parse directly from HTML tables ----------
 export function parseFlightsFromHtml($) {
   const flights = [];
   const bodyText = clean($('body').text());
@@ -28,40 +29,38 @@ export function parseFlightsFromHtml($) {
 
   $('table').each((_, tbl) => {
     const $tbl = $(tbl);
-    // Skip obvious filter/legend tables (no <td> rows or very few columns)
+
+    // Skip tiny/legend tables (not data grids)
     const sampleRow = $tbl.find('tr').first();
     const sampleCols = sampleRow.find('td,th').length;
     if (sampleCols < 4) return;
 
     $tbl.find('tr').each((__, tr) => {
       const tds = $(tr).find('td');
-      if (tds.length < 4) return; // too small to be a flight row
+      if (tds.length < 4) return; // likely not a flight row
 
       const cells = tds.map((i, td) => clean($(td).text())).get();
       const rowText = clean(cells.join(' '));
 
-      // Attempt to identify logical columns
-      // Heuristic: one cell looks like "Q2 225", a couple look like times, one looks like DOM/T1/T2.
       let flightNo = null, airline = null, number = null, terminal = null;
       let scheduled = null, estimated = null, status = null, place = null;
 
-      // find terminal cell
+      // Terminal (DOM/T1/T2)
       const termIdx = cells.findIndex(c => TERM_RX.test(c));
       if (termIdx !== -1) terminal = cells[termIdx].toUpperCase();
 
-      // find times
+      // Times
       const times = rowText.match(TIME_RX) || [];
       if (times.length >= 1) scheduled = times[0];
       if (times.length >= 2) estimated = times[1];
 
-      // find status word
+      // Status word
       const sMatch = rowText.match(STATUS_RX);
       if (sMatch) status = sMatch[1].toUpperCase();
 
-      // find flight cell
+      // Flight code (may be in one cell or split across two)
       let flightIdx = cells.findIndex(c => FLIGHT_RX.test(c));
       if (flightIdx === -1) {
-        // sometimes airline & number in two cells
         for (let i = 0; i < cells.length - 1; i++) {
           const combo = clean(`${cells[i]} ${cells[i + 1]}`);
           if (FLIGHT_RX.test(combo)) { flightIdx = i; cells[i] = combo; break; }
@@ -70,23 +69,22 @@ export function parseFlightsFromHtml($) {
       if (flightIdx !== -1) {
         const m = cells[flightIdx].match(FLIGHT_RX);
         airline = m[1].toUpperCase();
-        number = m[2].toUpperCase();
+        number  = m[2].toUpperCase();
         flightNo = `${airline} ${number}`;
       }
 
-      // place/origin: best guess = text chunk between flight and first time/terminal
+      // Origin/destination guess: content after the flight and before first time/terminal
       if (flightIdx !== -1) {
-        // look forward until we hit a time or terminal cell
         let end = cells.length;
         const firstTimeIdx = cells.findIndex(c => TIME_RX.test(c));
         if (firstTimeIdx !== -1) end = Math.min(end, firstTimeIdx);
-        if (termIdx !== -1) end = Math.min(end, termIdx);
+        if (termIdx !== -1)     end = Math.min(end, termIdx);
         if (end > flightIdx + 1) {
           place = clean(cells.slice(flightIdx + 1, end).join(' '));
         }
       }
       if (!place) {
-        // fallback: longest non-time, non-terminal cell that isn't the flight cell
+        // Fallback: pick the longest non-time, non-terminal cell that's not the flight cell
         const candidates = cells
           .map((c, i) => ({ c, i }))
           .filter(({ c, i }) =>
@@ -96,7 +94,6 @@ export function parseFlightsFromHtml($) {
         }
       }
 
-      // accept only plausible rows
       if (flightNo && terminal && scheduled) {
         flights.push({
           airline,
@@ -115,7 +112,7 @@ export function parseFlightsFromHtml($) {
   return { updatedLT, flights };
 }
 
-// --------- FALLBACK: parse from page text ----------
+// ---------- FALLBACK: tolerant line-by-line text parser ----------
 export function parseFlightsFromText(txt) {
   const norm = clean(txt);
   const lines = norm.split(/\n+/).map(s => s.trim()).filter(Boolean);
@@ -146,7 +143,7 @@ export function parseFlightsFromText(txt) {
     }
 
     airline = airline?.toUpperCase();
-    number = number?.toUpperCase();
+    number  = number?.toUpperCase();
     terminal = terminal ? terminal.toUpperCase() : null;
 
     let status = null;
