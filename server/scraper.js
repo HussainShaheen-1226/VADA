@@ -1,26 +1,45 @@
-import { chromium } from 'playwright';
+// server/scraper.js
+// Robust, selector-agnostic text parser for Velana FIDS pages.
+// No Playwright. No DOM selectors. It parses the page BODY text.
 
-// Parse "Updated: Friday 15 Aug, 2025 14:32 LT" (or similar)
+/**
+ * Extracts the "Updated: ... LT" timestamp line (if present) from the page text.
+ * Example: "Updated: Friday 15 Aug, 2025 14:32 LT"
+ */
 export function extractUpdatedLT(text) {
   const m = text.match(/Updated:\s*([^\n]+?)\s*LT/i);
   return m ? m[1].trim() : null;
 }
 
 /**
- * Robust, selector-agnostic text parser
- * Matches lines like:
- *   Q2 225 Dharavandhoo 13:20 13:29 DOM
- *   (next line) LANDED
+ * Parse flights from raw page text.
  *
- * Captures: airline, number, origin/dest, sched, est?, terminal, status?
+ * We expect lines like:
+ *   Q2 225 Dharavandhoo 13:20 13:29 DOM
+ * Sometimes the status appears on the same line tail or the next line:
+ *   LANDED | DELAYED | FINAL CALL | GATE CLOSED | BOARDING | DEPARTED | CANCELLED | ON TIME | SCHEDULED | ESTIMATED
+ *
+ * Captured fields:
+ * - airline (e.g., Q2)
+ * - number  (e.g., 225)
+ * - origin_or_destination (e.g., Dharavandhoo)
+ * - scheduled (HH:MM)
+ * - estimated (HH:MM or null)
+ * - terminal (DOM or T1/T2)
+ * - status (nullable)
  */
 export function parseFlightsFromText(txt) {
   const lines = txt.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
 
+  // Flight line regex:
+  //  airline   number          place                sched      est?            terminal   tail (may carry status)
   const flightLine = /^([A-Z0-9]{1,3})\s*([0-9]{2,4}[A-Z]?)\s+(.+?)\s+(\d{1,2}:\d{2})(?:\s+(\d{1,2}:\d{2}))?\s+(DOM|T\d)\s*(.*)$/i;
+
+  // Known status words (case-insensitive)
   const statusLine = /^(LANDED|DELAYED|FINAL CALL|GATE CLOSED|BOARDING|DEPARTED|CANCELLED|ON TIME|SCHEDULED|ESTIMATED)$/i;
 
   const flights = [];
+
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
     const m = l.match(flightLine);
@@ -31,7 +50,6 @@ export function parseFlightsFromText(txt) {
     number = number.toUpperCase();
     terminal = terminal.toUpperCase();
 
-    // Status may be on same line tail or next line
     let status = null;
     if (tail && statusLine.test(tail.trim())) {
       status = tail.trim().toUpperCase();
@@ -55,18 +73,4 @@ export function parseFlightsFromText(txt) {
     updatedLT: extractUpdatedLT(txt),
     flights
   };
-}
-
-export async function scrapeWithPlaywright(url) {
-  const browser = await chromium.launch({
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  });
-  const page = await browser.newPage();
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  // Wait a moment in case content is injected
-  await page.waitForTimeout(1500);
-  const text = await page.locator('body').innerText();
-  await browser.close();
-
-  return parseFlightsFromText(text);
 }
