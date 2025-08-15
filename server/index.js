@@ -1,224 +1,301 @@
-import express from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
-import axios from 'axios';
-import * as cheerio from 'cheerio';
-import crypto from 'crypto';
+import express from "express";
+import cors from "cors";
+import fs from "fs";
+import path from "path";
+import crypto from "crypto";
+import dotenv from "dotenv";
+import axios from "axios";
+import * as cheerio from "cheerio";
 
 dotenv.config();
 
+// ---------- Config ----------
 const app = express();
 const PORT = process.env.PORT || 10000;
 
+const DATA_DIR = path.resolve(".");
+const FLIGHTS_FILE = path.join(DATA_DIR, "flights.json");
+const META_FILE = path.join(DATA_DIR, "meta.json");
+const LOG_FILE = path.join(DATA_DIR, "call-logs.json");
+
+const SOURCE_URL =
+  process.env.SOURCE_URL ||
+  "https://www.fis.com.mv/WebFids.php"; // adjust if your real URL differs
+
+const SCRAPE_INTERVAL_MS = Number(process.env.SCRAPE_INTERVAL_MS || 120000); // 2 min by default
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
+const REFRESH_TOKEN = process.env.REFRESH_TOKEN || "";
+
+// ---------- Helpers ----------
+const readJSON = (file, fallback) => {
+  try {
+    if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, "utf-8"));
+  } catch (e) {
+    console.error(`[IO] Failed reading ${file}:`, e);
+  }
+  return fallback;
+};
+
+const writeJSON = (file, data) => {
+  try {
+    fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  } catch (e) {
+    console.error(`[IO] Failed writing ${file}:`, e);
+  }
+};
+
+const hashString = (s) => crypto.createHash("sha256").update(s).digest("hex");
+
+// Ensure files exist
+if (!fs.existsSync(FLIGHTS_FILE)) writeJSON(FLIGHTS_FILE, []);
+if (!fs.existsSync(META_FILE))
+  writeJSON(META_FILE, {
+    hash: null,
+    count: 0,
+    updatedAt: null,
+    lastError: null,
+    etag: null,
+    lastModified: null,
+    intervalMs: SCRAPE_INTERVAL_MS,
+  });
+if (!fs.existsSync(LOG_FILE)) writeJSON(LOG_FILE, []);
+
+// In-memory logs
+let callLogs = readJSON(LOG_FILE, []);
+
+// ---------- Scraping (Cheerio first, Playwright fallback) ----------
+async function scrapeWithCheerio() {
+  const headers = {
+    "User-Agent":
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
+    Accept: "text/html,application/xhtml+xml",
+  };
+  const r = await axios.get(SOURCE_URL, { headers, timeout: 30000, validateStatus: () => true });
+  const etag = r.headers.etag || null;
+  const lastModified = r.headers["last-modified"] || null;
+
+  const html = r.data || "";
+  const $ = cheerio.load(html);
+
+  // Try to find a table with arrivals; adjust selectors to match the live DOM
+  // Example: rows within <table id="arrivals"> or any rows that look like flights.
+  let rows = $("table tr");
+  if (rows.length === 0) {
+    // Try common fallback selectors
+    rows = $("#arrivals tr, .arrivals tr, .table tr");
+  }
+
+  const flights = [];
+  rows.each((_, tr) => {
+    const tds = $(tr).find("td");
+    if (tds.length < 4) return; // skip headers/short rows
+
+    // You will likely need to tweak indexes based on the real DOM order:
+    // Example mapping (adjust as needed):
+    const flightNo = $(tds[0]).text().trim() || $(tds[1]).text().trim();
+    const route = $(tds[2]).text().trim();
+    const sta = $(tds[3]).text().trim();
+    const etd = $(tds[4]) ? $(tds[4]).text().trim() : "";
+    const status = $(tds[5]) ? $(tds[5]).text().trim() : "";
+
+    if (!flightNo) return;
+    // Airline from first two letters
+    const prefix = flightNo.replace(/\s+/g, "").slice(0, 2).toUpperCase();
+    const airline =
+      prefix === "Q2" ? "Maldivian" : prefix === "NR" ? "Manta Air" : prefix === "VP" ? "Villa Air" : "";
+
+    flights.push({
+      airline,
+      flightNo,
+      route,
+      sta,
+      etd,
+      status,
+    });
+  });
+
+  return { flights, raw: html, etag, lastModified, engine: "cheerio" };
+}
+
+async function scrapeWithPlaywright() {
+  // Lazy import to avoid pulling it if not needed
+  const { chromium } = await import("playwright");
+  const browser = await chromium.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
+
+  let html = "";
+  try {
+    const page = await browser.newPage();
+    await page.goto(SOURCE_URL, { waitUntil: "networkidle", timeout: 45000 });
+    // If the page builds table via JS, give it a moment:
+    await page.waitForTimeout(1500);
+    html = await page.content();
+  } finally {
+    await browser.close();
+  }
+
+  const $ = cheerio.load(html);
+  let rows = $("table tr");
+  if (rows.length === 0) rows = $("#arrivals tr, .arrivals tr, .table tr");
+
+  const flights = [];
+  rows.each((_, tr) => {
+    const tds = $(tr).find("td");
+    if (tds.length < 4) return;
+
+    const flightNo = $(tds[0]).text().trim() || $(tds[1]).text().trim();
+    const route = $(tds[2]).text().trim();
+    const sta = $(tds[3]).text().trim();
+    const etd = $(tds[4]) ? $(tds[4]).text().trim() : "";
+    const status = $(tds[5]) ? $(tds[5]).text().trim() : "";
+
+    if (!flightNo) return;
+    const prefix = flightNo.replace(/\s+/g, "").slice(0, 2).toUpperCase();
+    const airline =
+      prefix === "Q2" ? "Maldivian" : prefix === "NR" ? "Manta Air" : prefix === "VP" ? "Villa Air" : "";
+
+    flights.push({
+      airline,
+      flightNo,
+      route,
+      sta,
+      etd,
+      status,
+    });
+  });
+
+  return { flights, raw: html, etag: null, lastModified: null, engine: "playwright" };
+}
+
+async function scrapeAndMaybeUpdate({ force = false } = {}) {
+  const meta = readJSON(META_FILE, {
+    hash: null,
+    count: 0,
+    updatedAt: null,
+    lastError: null,
+    etag: null,
+    lastModified: null,
+    intervalMs: SCRAPE_INTERVAL_MS,
+  });
+
+  try {
+    console.log("[SCRAPE] start", new Date().toISOString());
+
+    // 1) Try Cheerio
+    let attempt = await scrapeWithCheerio();
+    console.log(`[SCRAPE] ${attempt.engine} rows=${attempt.flights.length}`);
+
+    // 2) Fallback to Playwright if no rows
+    if (attempt.flights.length === 0) {
+      console.log("[SCRAPE] No rows via cheerio, trying Playwright…");
+      attempt = await scrapeWithPlaywright();
+      console.log(`[SCRAPE] ${attempt.engine} rows=${attempt.flights.length}`);
+    }
+
+    const newHash = hashString(attempt.raw || "");
+    const changed =
+      force ||
+      newHash !== meta.hash ||
+      attempt.flights.length !== readJSON(FLIGHTS_FILE, []).length;
+
+    // Update files
+    if (changed) {
+      writeJSON(FLIGHTS_FILE, attempt.flights);
+      writeJSON(META_FILE, {
+        hash: newHash,
+        count: attempt.flights.length,
+        updatedAt: new Date().toISOString(),
+        lastError: null,
+        etag: attempt.etag,
+        lastModified: attempt.lastModified,
+        intervalMs: SCRAPE_INTERVAL_MS,
+      });
+      console.log(
+        `[SCRAPE] updated flights (${attempt.flights.length}), engine=${attempt.engine}`
+      );
+    } else {
+      // still refresh metadata timestamp so /meta shows recent activity
+      writeJSON(META_FILE, {
+        ...meta,
+        updatedAt: new Date().toISOString(),
+        lastError: null,
+        etag: attempt.etag,
+        lastModified: attempt.lastModified,
+        intervalMs: SCRAPE_INTERVAL_MS,
+      });
+      console.log("[SCRAPE] no change");
+    }
+  } catch (err) {
+    console.error("[SCRAPE] ERROR:", err?.message || err);
+    writeJSON(META_FILE, {
+      ...readJSON(META_FILE, {}),
+      lastError: String(err?.message || err),
+      updatedAt: new Date().toISOString(),
+      intervalMs: SCRAPE_INTERVAL_MS,
+    });
+  }
+}
+
+// ---------- Server ----------
 app.use(cors());
 app.use(express.json());
 
-/* ---------------------- Config ---------------------- */
-const DOMESTIC_ARRIVALS_URL =
-  'https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=D&webfids_lang=1&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL';
-
-const UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36';
-
-/* ---------------------- In-memory state ---------------------- */
-let flightsCache = [];
-let lastUpdatedAt = null;
-let lastError = null;
-let lastHash = '';
-let etag = null;
-let lastModified = null;
-
-/* Adaptive schedule (in ms) */
-const FAST = 30_000;     // 30s while changing
-const MED  = 60_000;     // 1m
-const SLOW = 300_000;    // 5m when stable
-let currentInterval = FAST;
-let timer = null;
-
-/* SSE clients */
-const sseClients = new Set();
-
-/* ---------------------- Helpers ---------------------- */
-const airlineFromFlight = (flightNo = '') => {
-  const up = (flightNo || '').toUpperCase();
-  if (up.startsWith('Q2')) return 'Maldivian';
-  if (up.startsWith('NR')) return 'Manta Air';
-  if (up.startsWith('VP')) return 'Villa Air';
-  return 'Unknown';
-};
-
-const mapRowToSchema = ({ flight, from, time, estm, status }) => ({
-  airline: airlineFromFlight(flight),
-  flightNo: flight || '',
-  route: from || '',
-  sta: time || '',
-  etd: estm || '',
-  status: status || '',
+// Flights (array only)
+app.get("/flights", (req, res) => {
+  const data = readJSON(FLIGHTS_FILE, []);
+  res.json(data);
 });
 
-const hashOf = (str) => crypto.createHash('sha256').update(str).digest('hex');
-
-function schedule(nextMs) {
-  if (timer) clearTimeout(timer);
-  currentInterval = nextMs;
-  timer = setTimeout(tick, currentInterval);
-}
-
-function notifyClients(payload) {
-  const data = `data: ${JSON.stringify(payload)}\n\n`;
-  for (const res of sseClients) {
-    try { res.write(data); } catch { /* ignore broken pipe */ }
-  }
-}
-
-/* ---------------------- Scrape once with conditional request ---------------------- */
-async function scrapeOnce() {
-  const started = Date.now();
-  lastError = null;
-
-  try {
-    const headers = {
-      'User-Agent': UA,
-      'Accept': 'text/html',
-    };
-    if (etag) headers['If-None-Match'] = etag;
-    if (lastModified) headers['If-Modified-Since'] = lastModified;
-
-    const resp = await axios.get(DOMESTIC_ARRIVALS_URL, {
-      headers,
-      validateStatus: (s) => [200, 304].includes(s),
-      timeout: 30000,
-    });
-
-    // 304 → no change
-    if (resp.status === 304) {
-      console.log(`[SCRAPE] 304 Not Modified in ${Date.now() - started}ms`);
-      schedule(Math.min(SLOW, currentInterval * 2));
-      return false;
-    }
-
-    // 200 → may have changed
-    etag = resp.headers.etag || etag;
-    lastModified = resp.headers['last-modified'] || lastModified;
-
-    const html = resp.data || '';
-    const $ = cheerio.load(html);
-
-    // Hash either the specific rows' parent HTML or whole HTML (fallback)
-    const maybeParent = $('tr.schedulerow, tr.schedulerowtwo').first().parent();
-    const tableHtml = (maybeParent && maybeParent.length ? maybeParent.html() : '') || html;
-    const newHash = hashOf(tableHtml);
-
-    if (newHash === lastHash) {
-      console.log(`[SCRAPE] 200 but content hash unchanged in ${Date.now() - started}ms`);
-      schedule(Math.min(SLOW, currentInterval * 2));
-      return false;
-    }
-
-    // Parse rows
-    const rows = $('tr.schedulerow, tr.schedulerowtwo');
-    const parsed = [];
-    rows.each((_, row) => {
-      const tds = $(row).find('td');
-      if (tds.length >= 5) {
-        const flight = $(tds[0]).text().trim();
-        const from   = $(tds[1]).text().trim();
-        const time   = $(tds[2]).text().trim(); // STA
-        const estm   = $(tds[3]).text().trim(); // ESTM
-        const status = $(tds[4]).text().trim();
-
-        const fUp = (flight || '').toUpperCase();
-        // Keep only domestic carriers you track (Q2/NR/VP)
-        if (fUp.startsWith('Q2') || fUp.startsWith('NR') || fUp.startsWith('VP')) {
-          parsed.push(mapRowToSchema({ flight, from, time, estm, status }));
-        }
-      }
-    });
-
-    // Sort for stable hashing/diffs
-    parsed.sort((a, b) => (a.flightNo + a.sta).localeCompare(b.flightNo + b.sta));
-
-    flightsCache = parsed;
-    lastHash = newHash;
-    lastUpdatedAt = new Date();
-
-    console.log(
-      `[SCRAPE] CHANGED rows=${parsed.length} in ${Date.now() - started}ms @ ${lastUpdatedAt.toISOString()}`
-    );
-
-    // on change, go fast again and notify clients
-    schedule(FAST);
-    notifyClients({ type: 'changed', updatedAt: lastUpdatedAt, count: flightsCache.length });
-    return true;
-  } catch (err) {
-    lastError = String(err?.message || err);
-    console.error('[SCRAPE] ERROR:', lastError);
-    schedule(MED);
-    return false;
-  }
-}
-
-/* ---------------------- Scheduler ---------------------- */
-async function tick() {
-  await scrapeOnce();
-}
-
-/* Boot: run once, then schedule */
-await scrapeOnce();
-schedule(FAST);
-
-/* ---------------------- API ---------------------- */
-app.get('/', (_req, res) => {
-  res.send('VADA backend running (conditional scraping + SSE)');
-});
-
-app.get('/meta', (_req, res) => {
-  res.json({
-    hash: lastHash,
-    count: flightsCache.length,
-    updatedAt: lastUpdatedAt,
-    lastError,
-    etag,
-    lastModified,
-    intervalMs: currentInterval,
+// Metadata
+app.get("/meta", (req, res) => {
+  const meta = readJSON(META_FILE, {
+    hash: null,
+    count: 0,
+    updatedAt: null,
+    lastError: null,
+    etag: null,
+    lastModified: null,
+    intervalMs: SCRAPE_INTERVAL_MS,
   });
+  res.json(meta);
 });
 
-app.get('/flights', (_req, res) => {
-  res.setHeader('Cache-Control', 'no-store');
-  res.json(flightsCache);
+// Force refresh (optional)
+app.post("/refresh", async (req, res) => {
+  if (REFRESH_TOKEN && req.headers.authorization !== `Bearer ${REFRESH_TOKEN}`) {
+    return res.status(403).json({ error: "Unauthorized" });
+  }
+  await scrapeAndMaybeUpdate({ force: true });
+  res.json({ ok: true });
 });
 
-app.post('/refresh', async (_req, res) => {
-  const changed = await scrapeOnce();
-  res.json({
-    ok: true,
-    changed,
-    hash: lastHash,
-    count: flightsCache.length,
-    updatedAt: lastUpdatedAt,
-    lastError,
-  });
+// Call logs (unchanged from yours)
+app.post("/api/call-logs", (req, res) => {
+  const { userId, flight, type, timestamp } = req.body;
+  if (!userId || !flight || !type || !timestamp) {
+    return res.status(400).json({ error: "Missing required fields" });
+  }
+  const entry = { userId, flight, type, timestamp };
+  callLogs.push(entry);
+  writeJSON(LOG_FILE, callLogs);
+  res.json({ message: "Call logged successfully" });
 });
 
-/* ---------- Server-Sent Events: push change notifications ---------- */
-app.get('/events', (req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-store');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders?.();
-
-  // Send current state immediately
-  res.write(`data: ${JSON.stringify({
-    type: 'hello',
-    updatedAt: lastUpdatedAt,
-    count: flightsCache.length
-  })}\n\n`);
-
-  sseClients.add(res);
-  req.on('close', () => sseClients.delete(res));
+app.get("/api/call-logs", (req, res) => {
+  const auth = req.headers["authorization"];
+  const token = auth?.split(" ")[1];
+  if (!ADMIN_TOKEN || token !== ADMIN_TOKEN) {
+    return res.status(403).json({ error: "Unauthorized" });
+  }
+  res.json(callLogs);
 });
 
+// ---------- Startup ----------
 app.listen(PORT, () => {
-  console.log(`✅ Backend listening on :${PORT}`);
+  console.log(`✅ Backend running on port ${PORT}`);
+  // First scrape immediately, then on interval
+  scrapeAndMaybeUpdate({ force: true });
+  setInterval(scrapeAndMaybeUpdate, SCRAPE_INTERVAL_MS);
 });
