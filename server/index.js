@@ -1,5 +1,4 @@
-// VADA backend — Cheerio-only scraper with robust text parsing
-
+// VADA backend — Cheerio-only scraper; scrapes Domestic, International, and All
 process.on('unhandledRejection', (err) => console.error('[VADA] Unhandled Rejection:', err));
 process.on('uncaughtException', (err) => console.error('[VADA] Uncaught Exception:', err));
 
@@ -26,16 +25,26 @@ const CALL_LOGS_PATH = path.join(DATA_DIR, 'call-logs.json');
 
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || '*';
 const SCRAPE_INTERVAL_MS = Number(process.env.SCRAPE_INTERVAL_MS || 120_000);
-const FILTER_DOMESTIC_ONLY = (process.env.FILTER_DOMESTIC_ONLY ?? '1') === '1';
+// Keep for backward compatibility: when 1, /flights returns only domestic by default
+const FILTER_DOMESTIC_ONLY = (process.env.FILTER_DOMESTIC_ONLY ?? '0') === '1';
 
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 const REFRESH_TOKEN = process.env.REFRESH_TOKEN || ADMIN_TOKEN;
 
-// ✅ Direct "post-Update" Arrivals URL (returns the actual list)
-// We keep homepage as a final fallback for resiliency.
-const FIDS_URLS = [
-  'https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=ALL&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL&webfids_lang=1',
-  'https://www.fis.com.mv/'
+// ---- Targets: scrape all three views (Domestic, International, All) ----
+const FIDS_TARGETS = [
+  {
+    label: 'domestic',
+    url: 'https://www.fis.com.mv/index.php?webfids_type=arrivals&webfids_lang=1&webfids_domesticinternational=D&webfids_passengercargo=passenger&webfids_airline=ALL&webfids_waypoint=ALL&Submit=+UPDATE+'
+  },
+  {
+    label: 'international',
+    url: 'https://www.fis.com.mv/index.php?webfids_type=arrivals&webfids_lang=1&webfids_domesticinternational=I&webfids_passengercargo=passenger&webfids_airline=ALL&webfids_waypoint=ALL&Submit=+UPDATE+'
+  },
+  {
+    label: 'all',
+    url: 'https://www.fis.com.mv/index.php?webfids_type=arrivals&webfids_lang=1&webfids_domesticinternational=ALL&webfids_passengercargo=passenger&webfids_airline=ALL&webfids_waypoint=ALL&Submit=+UPDATE+'
+  }
 ];
 
 // ------------------------ Helpers ------------------------
@@ -53,16 +62,21 @@ function writeJsonAtomic(file, data) {
 function hashJson(value) {
   return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
+function keyOfFlight(f) {
+  // unique-ish key; ignore category to dedupe across sources
+  return `${f.flightNo}|${f.scheduled}|${f.origin_or_destination}|${f.terminal}`;
+}
 function dedupeFlights(arr) {
   const map = new Map();
   for (const f of arr) {
-    const key = `${f.flightNo}|${f.scheduled}|${f.terminal}|${f.origin_or_destination}`;
-    if (!map.has(key)) map.set(key, f);
+    const k = keyOfFlight(f);
+    if (!map.has(k)) map.set(k, f);
   }
-  return Array.from(map.values());
+  return [...map.values()];
 }
-function filterDomestic(arr) {
-  return arr.filter(f => f.terminal === 'DOM' || f.isDomestic === true);
+function categorizeByTerminal(f) {
+  // Final category from actual terminal; sourceLabel is advisory only
+  return f.terminal === 'DOM' ? 'domestic' : 'international';
 }
 
 // Prepare storage
@@ -74,61 +88,77 @@ ensureFile(META_PATH, JSON.stringify({
   updatedLT: null,
   lastError: null,
   lastOk: null,
-  etag: null,
-  lastModified: null
+  tried: [],     // list of tried URLs with status
+  debug: null    // { httpStatus, textSample } for first 0-row response
 }, null, 2));
 ensureFile(CALL_LOGS_PATH, '[]');
 
-// ------------------------ Scraping (Cheerio-only) ------------------------
-async function cheerioAttempt(url) {
+// ------------------------ Scraping ------------------------
+async function fetchAndParse(url, label) {
   const res = await axios.get(url, {
     timeout: 30000,
-    headers: { 'User-Agent': 'Mozilla/5.0 (VADA scraper)' },
-    validateStatus: () => true // don't throw on 4xx/5xx
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (VADA scraper)',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Referer': 'https://www.fis.com.mv/index.php'
+    },
+    validateStatus: () => true
   });
 
   const html = typeof res.data === 'string' ? res.data : '';
   const $ = cheerio.load(html);
-  // Normalize whitespace; parsing uses BODY text (selector-agnostic)
-  const pageText = $('body').text().replace(/\s+/g, ' ').trim();
+  const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
 
-  const { flights, updatedLT } = parseFlightsFromText(pageText);
+  const { flights, updatedLT } = parseFlightsFromText(bodyText);
+
+  // Tag with preliminary category (source label) + source URL for traceability
+  const tagged = flights.map(f => ({
+    ...f,
+    category: categorizeByTerminal(f), // trust terminal ultimately
+    sourceLabel: label,
+    sourceUrl: url
+  }));
 
   return {
-    flights,
+    label,
+    url,
+    status: res.status,
     updatedLT,
-    etag: res.headers.etag || null,
-    lastModified: res.headers['last-modified'] || null,
-    httpStatus: res.status,
-    textSample: pageText.slice(0, 500) // for debugging when 0 rows
+    textSample: flights.length ? null : bodyText.slice(0, 800),
+    flights: tagged
   };
 }
 
 async function scrapeOnce() {
+  const tried = [];
   let collected = [];
-  let updatedLT = null, etag = null, lastModified = null, lastError = null;
-  let httpStatus = null, textSample = null;
+  let updatedLT = null;
+  let firstZeroSample = null;
 
-  for (const url of FIDS_URLS) {
+  for (const t of FIDS_TARGETS) {
     try {
-      const r = await cheerioAttempt(url);
-      httpStatus = httpStatus ?? r.httpStatus;
-      textSample = textSample ?? r.textSample;
-      if (r.flights.length > 0) {
-        collected = collected.concat(r.flights);
-        updatedLT = updatedLT || r.updatedLT;
-        etag = etag || r.etag;
-        lastModified = lastModified || r.lastModified;
+      const r = await fetchAndParse(t.url, t.label);
+      tried.push({ url: r.url, label: r.label, status: r.status });
+      if (!updatedLT && r.updatedLT) updatedLT = r.updatedLT;
+      if (r.flights.length === 0 && !firstZeroSample) {
+        firstZeroSample = { httpStatus: r.status, textSample: r.textSample, url: r.url };
+      } else {
+        collected.push(...r.flights);
       }
-    } catch (err) {
-      lastError = lastError || String(err);
+    } catch (e) {
+      tried.push({ url: t.url, label: t.label, status: 'error', error: String(e) });
+      if (!firstZeroSample) firstZeroSample = { httpStatus: null, textSample: String(e), url: t.url };
     }
   }
 
   collected = dedupeFlights(collected);
-  if (FILTER_DOMESTIC_ONLY) collected = filterDomestic(collected);
 
-  return { flights: collected, updatedLT, etag, lastModified, lastError, httpStatus, textSample };
+  return {
+    flights: collected,
+    updatedLT: updatedLT || null,
+    tried,
+    debug: collected.length === 0 ? firstZeroSample : null
+  };
 }
 
 let isScraping = false;
@@ -137,37 +167,29 @@ async function scrapeAndMaybeSave({ manual = false } = {}) {
   if (isScraping) return { skipped: true, reason: 'scrape_in_progress' };
   isScraping = true;
 
-  const start = Date.now();
   const prevMeta = readJsonSafe(META_PATH, {});
   try {
-    const { flights, updatedLT, etag, lastModified, lastError, httpStatus, textSample } = await scrapeOnce();
+    const { flights, updatedLT, tried, debug } = await scrapeOnce();
+
+    // Backward-compat default filtering:
+    const finalFlights = FILTER_DOMESTIC_ONLY ? flights.filter(f => f.category === 'domestic') : flights;
 
     const nextMeta = {
       ...prevMeta,
-      rowCount: flights.length,
+      rowCount: finalFlights.length,
       scrapedAt: new Date().toISOString(),
-      updatedLT: updatedLT || null,
-      etag: etag || prevMeta.etag || null,
-      lastModified: lastModified || prevMeta.lastModified || null,
-      lastError: lastError || null,
-      lastOk: !lastError ? new Date().toISOString() : prevMeta.lastOk || null,
-      manualTrigger: manual
+      updatedLT,
+      lastError: null,
+      lastOk: new Date().toISOString(),
+      tried
     };
+    if (finalFlights.length === 0 && debug) nextMeta.debug = debug; else delete nextMeta.debug;
 
-    if (flights.length === 0) {
-      nextMeta.debug = {
-        httpStatus: httpStatus ?? null,
-        textSample: textSample ?? null
-      };
-    } else {
-      delete nextMeta.debug;
-    }
-
-    const newHash = hashJson(flights);
+    const newHash = hashJson(finalFlights);
     const changed = newHash !== prevMeta.hash;
 
     if (changed) {
-      writeJsonAtomic(FLIGHTS_PATH, flights);
+      writeJsonAtomic(FLIGHTS_PATH, finalFlights);
       nextMeta.hash = newHash;
     } else {
       nextMeta.hash = prevMeta.hash || newHash;
@@ -175,9 +197,14 @@ async function scrapeAndMaybeSave({ manual = false } = {}) {
     writeJsonAtomic(META_PATH, nextMeta);
 
     isScraping = false;
-    return { ok: true, changed, tookMs: Date.now() - start, rowCount: flights.length, updatedLT: nextMeta.updatedLT };
+    return { ok: true, changed, rowCount: finalFlights.length, updatedLT: nextMeta.updatedLT };
   } catch (err) {
-    const nextMeta = { ...prevMeta, scrapedAt: new Date().toISOString(), lastError: String(err), manualTrigger: manual };
+    const nextMeta = {
+      ...prevMeta,
+      scrapedAt: new Date().toISOString(),
+      lastError: String(err),
+      tried: prevMeta.tried || []
+    };
     writeJsonAtomic(META_PATH, nextMeta);
     isScraping = false;
     return { ok: false, error: String(err) };
@@ -194,7 +221,19 @@ app.get('/', (_req, res) => {
   res.json({ service: 'VADA backend', ok: true, intervalMs: SCRAPE_INTERVAL_MS, filterDomesticOnly: FILTER_DOMESTIC_ONLY });
 });
 
-app.get('/flights', (_req, res) => res.json(readJsonSafe(FLIGHTS_PATH, [])));
+app.get('/flights', (req, res) => {
+  // Optional runtime filter: /flights?scope=domestic|international|all
+  const scope = String(req.query.scope || '').toLowerCase();
+  let flights = readJsonSafe(FLIGHTS_PATH, []);
+  if (scope === 'domestic') flights = flights.filter(f => f.category === 'domestic');
+  else if (scope === 'international') flights = flights.filter(f => f.category === 'international');
+  else if (scope === 'all' || scope === '') {
+    // if FILTER_DOMESTIC_ONLY=1, the stored file already has only domestic;
+    // in that case, "all" just returns what's stored.
+  }
+  res.json(flights);
+});
+
 app.get('/meta', (_req, res) => res.json(readJsonSafe(META_PATH, {})));
 
 function authRefresh(req) {
@@ -257,12 +296,9 @@ app.get('/api/call-logs', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`[VADA] listening on ${PORT}`);
-
-  // Kick off a scrape but never crash process if it fails
   scrapeAndMaybeSave()
     .then((r) => console.log('[VADA] first scrape:', r))
     .catch((e) => console.error('[VADA] first scrape error:', e));
-
   setInterval(() => {
     scrapeAndMaybeSave()
       .then((r) => { if (!r.ok) console.error('[VADA] scrape error', r.error); })
