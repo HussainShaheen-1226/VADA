@@ -28,8 +28,7 @@ const REFRESH_TOKEN = process.env.REFRESH_TOKEN || ADMIN_TOKEN;
 
 // Try multiple URLs to be resilient
 const FIDS_URLS = [
-  'https://www.fis.com.mv/',
-  'https://www.fis.com.mv/WebFids.php'
+  'https://www.fis.com.mv/index.php?webfids_type=arrivals'
 ];
 
 // ------------------------ Helpers ------------------------
