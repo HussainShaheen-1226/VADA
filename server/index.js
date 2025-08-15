@@ -1,301 +1,314 @@
-import express from "express";
-import cors from "cors";
-import fs from "fs";
-import path from "path";
-import crypto from "crypto";
-import dotenv from "dotenv";
-import axios from "axios";
-import * as cheerio from "cheerio";
+import express from 'express';
+import cors from 'cors';
+import morgan from 'morgan';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import crypto from 'crypto';
+import axios from 'axios';
+import cheerio from 'cheerio';
+import { scrapeWithPlaywright, parseFlightsFromText } from './scraper.js';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-// ---------- Config ----------
-const app = express();
+// ------------------------ Config ------------------------
 const PORT = process.env.PORT || 10000;
+const DATA_DIR = path.join(__dirname);
+const FLIGHTS_PATH = path.join(DATA_DIR, 'flights.json');
+const META_PATH = path.join(DATA_DIR, 'meta.json');
+const CALL_LOGS_PATH = path.join(DATA_DIR, 'call-logs.json');
 
-const DATA_DIR = path.resolve(".");
-const FLIGHTS_FILE = path.join(DATA_DIR, "flights.json");
-const META_FILE = path.join(DATA_DIR, "meta.json");
-const LOG_FILE = path.join(DATA_DIR, "call-logs.json");
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || '*';
+const SCRAPE_INTERVAL_MS = Number(process.env.SCRAPE_INTERVAL_MS || 120_000);
+const FILTER_DOMESTIC_ONLY = (process.env.FILTER_DOMESTIC_ONLY ?? '1') === '1';
 
-const SOURCE_URL =
-  process.env.SOURCE_URL ||
-  "https://www.fis.com.mv/WebFids.php"; // adjust if your real URL differs
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+const REFRESH_TOKEN = process.env.REFRESH_TOKEN || ADMIN_TOKEN; // allow same
 
-const SCRAPE_INTERVAL_MS = Number(process.env.SCRAPE_INTERVAL_MS || 120000); // 2 min by default
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
-const REFRESH_TOKEN = process.env.REFRESH_TOKEN || "";
+// Try multiple URLs to be resilient
+const FIDS_URLS = [
+  'https://www.fis.com.mv/',            // landing page
+  'https://www.fis.com.mv/WebFids.php'  // classic endpoint
+];
 
-// ---------- Helpers ----------
-const readJSON = (file, fallback) => {
+// ------------------------ Helpers ------------------------
+function ensureFile(file, defaultContent) {
+  if (!fs.existsSync(file)) {
+    fs.writeFileSync(file, defaultContent, 'utf8');
+  }
+}
+function readJsonSafe(file, fallback) {
   try {
-    if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, "utf-8"));
-  } catch (e) {
-    console.error(`[IO] Failed reading ${file}:`, e);
+    const raw = fs.readFileSync(file, 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
   }
-  return fallback;
-};
-
-const writeJSON = (file, data) => {
-  try {
-    fs.writeFileSync(file, JSON.stringify(data, null, 2));
-  } catch (e) {
-    console.error(`[IO] Failed writing ${file}:`, e);
+}
+function writeJsonAtomic(file, data) {
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+  fs.renameSync(tmp, file);
+}
+function hashJson(value) {
+  return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+function dedupeFlights(arr) {
+  const map = new Map();
+  for (const f of arr) {
+    const key = `${f.flightNo}|${f.scheduled}|${f.terminal}|${f.origin_or_destination}`;
+    if (!map.has(key)) map.set(key, f);
   }
-};
-
-const hashString = (s) => crypto.createHash("sha256").update(s).digest("hex");
-
-// Ensure files exist
-if (!fs.existsSync(FLIGHTS_FILE)) writeJSON(FLIGHTS_FILE, []);
-if (!fs.existsSync(META_FILE))
-  writeJSON(META_FILE, {
-    hash: null,
-    count: 0,
-    updatedAt: null,
-    lastError: null,
-    etag: null,
-    lastModified: null,
-    intervalMs: SCRAPE_INTERVAL_MS,
-  });
-if (!fs.existsSync(LOG_FILE)) writeJSON(LOG_FILE, []);
-
-// In-memory logs
-let callLogs = readJSON(LOG_FILE, []);
-
-// ---------- Scraping (Cheerio first, Playwright fallback) ----------
-async function scrapeWithCheerio() {
-  const headers = {
-    "User-Agent":
-      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
-    Accept: "text/html,application/xhtml+xml",
-  };
-  const r = await axios.get(SOURCE_URL, { headers, timeout: 30000, validateStatus: () => true });
-  const etag = r.headers.etag || null;
-  const lastModified = r.headers["last-modified"] || null;
-
-  const html = r.data || "";
-  const $ = cheerio.load(html);
-
-  // Try to find a table with arrivals; adjust selectors to match the live DOM
-  // Example: rows within <table id="arrivals"> or any rows that look like flights.
-  let rows = $("table tr");
-  if (rows.length === 0) {
-    // Try common fallback selectors
-    rows = $("#arrivals tr, .arrivals tr, .table tr");
-  }
-
-  const flights = [];
-  rows.each((_, tr) => {
-    const tds = $(tr).find("td");
-    if (tds.length < 4) return; // skip headers/short rows
-
-    // You will likely need to tweak indexes based on the real DOM order:
-    // Example mapping (adjust as needed):
-    const flightNo = $(tds[0]).text().trim() || $(tds[1]).text().trim();
-    const route = $(tds[2]).text().trim();
-    const sta = $(tds[3]).text().trim();
-    const etd = $(tds[4]) ? $(tds[4]).text().trim() : "";
-    const status = $(tds[5]) ? $(tds[5]).text().trim() : "";
-
-    if (!flightNo) return;
-    // Airline from first two letters
-    const prefix = flightNo.replace(/\s+/g, "").slice(0, 2).toUpperCase();
-    const airline =
-      prefix === "Q2" ? "Maldivian" : prefix === "NR" ? "Manta Air" : prefix === "VP" ? "Villa Air" : "";
-
-    flights.push({
-      airline,
-      flightNo,
-      route,
-      sta,
-      etd,
-      status,
-    });
-  });
-
-  return { flights, raw: html, etag, lastModified, engine: "cheerio" };
+  return Array.from(map.values());
+}
+function filterDomestic(arr) {
+  return arr.filter(f => f.terminal === 'DOM' || f.isDomestic === true);
 }
 
-async function scrapeWithPlaywright() {
-  // Lazy import to avoid pulling it if not needed
-  const { chromium } = await import("playwright");
-  const browser = await chromium.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  });
+// Prepare storage
+ensureFile(FLIGHTS_PATH, '[]');
+ensureFile(META_PATH, JSON.stringify({
+  hash: null,
+  rowCount: 0,
+  scrapedAt: null,
+  updatedLT: null,
+  lastError: null,
+  lastOk: null,
+  etag: null,
+  lastModified: null
+}, null, 2));
+ensureFile(CALL_LOGS_PATH, '[]');
 
-  let html = "";
+// ------------------------ Scraping ------------------------
+async function cheerioAttempt(url) {
   try {
-    const page = await browser.newPage();
-    await page.goto(SOURCE_URL, { waitUntil: "networkidle", timeout: 45000 });
-    // If the page builds table via JS, give it a moment:
-    await page.waitForTimeout(1500);
-    html = await page.content();
-  } finally {
-    await browser.close();
-  }
-
-  const $ = cheerio.load(html);
-  let rows = $("table tr");
-  if (rows.length === 0) rows = $("#arrivals tr, .arrivals tr, .table tr");
-
-  const flights = [];
-  rows.each((_, tr) => {
-    const tds = $(tr).find("td");
-    if (tds.length < 4) return;
-
-    const flightNo = $(tds[0]).text().trim() || $(tds[1]).text().trim();
-    const route = $(tds[2]).text().trim();
-    const sta = $(tds[3]).text().trim();
-    const etd = $(tds[4]) ? $(tds[4]).text().trim() : "";
-    const status = $(tds[5]) ? $(tds[5]).text().trim() : "";
-
-    if (!flightNo) return;
-    const prefix = flightNo.replace(/\s+/g, "").slice(0, 2).toUpperCase();
-    const airline =
-      prefix === "Q2" ? "Maldivian" : prefix === "NR" ? "Manta Air" : prefix === "VP" ? "Villa Air" : "";
-
-    flights.push({
-      airline,
-      flightNo,
-      route,
-      sta,
-      etd,
-      status,
+    const res = await axios.get(url, {
+      timeout: 30000,
+      headers: { 'User-Agent': 'Mozilla/5.0 (VADA scraper)' },
+      validateStatus: s => s >= 200 && s < 400
     });
-  });
+    const $ = cheerio.load(res.data);
+    const pageText = $('body').text();
+    const { flights, updatedLT } = parseFlightsFromText(pageText);
 
-  return { flights, raw: html, etag: null, lastModified: null, engine: "playwright" };
-}
-
-async function scrapeAndMaybeUpdate({ force = false } = {}) {
-  const meta = readJSON(META_FILE, {
-    hash: null,
-    count: 0,
-    updatedAt: null,
-    lastError: null,
-    etag: null,
-    lastModified: null,
-    intervalMs: SCRAPE_INTERVAL_MS,
-  });
-
-  try {
-    console.log("[SCRAPE] start", new Date().toISOString());
-
-    // 1) Try Cheerio
-    let attempt = await scrapeWithCheerio();
-    console.log(`[SCRAPE] ${attempt.engine} rows=${attempt.flights.length}`);
-
-    // 2) Fallback to Playwright if no rows
-    if (attempt.flights.length === 0) {
-      console.log("[SCRAPE] No rows via cheerio, trying Playwright…");
-      attempt = await scrapeWithPlaywright();
-      console.log(`[SCRAPE] ${attempt.engine} rows=${attempt.flights.length}`);
-    }
-
-    const newHash = hashString(attempt.raw || "");
-    const changed =
-      force ||
-      newHash !== meta.hash ||
-      attempt.flights.length !== readJSON(FLIGHTS_FILE, []).length;
-
-    // Update files
-    if (changed) {
-      writeJSON(FLIGHTS_FILE, attempt.flights);
-      writeJSON(META_FILE, {
-        hash: newHash,
-        count: attempt.flights.length,
-        updatedAt: new Date().toISOString(),
-        lastError: null,
-        etag: attempt.etag,
-        lastModified: attempt.lastModified,
-        intervalMs: SCRAPE_INTERVAL_MS,
-      });
-      console.log(
-        `[SCRAPE] updated flights (${attempt.flights.length}), engine=${attempt.engine}`
-      );
-    } else {
-      // still refresh metadata timestamp so /meta shows recent activity
-      writeJSON(META_FILE, {
-        ...meta,
-        updatedAt: new Date().toISOString(),
-        lastError: null,
-        etag: attempt.etag,
-        lastModified: attempt.lastModified,
-        intervalMs: SCRAPE_INTERVAL_MS,
-      });
-      console.log("[SCRAPE] no change");
-    }
+    return {
+      ok: true,
+      flights,
+      updatedLT,
+      etag: res.headers.etag || null,
+      lastModified: res.headers['last-modified'] || null,
+    };
   } catch (err) {
-    console.error("[SCRAPE] ERROR:", err?.message || err);
-    writeJSON(META_FILE, {
-      ...readJSON(META_FILE, {}),
-      lastError: String(err?.message || err),
-      updatedAt: new Date().toISOString(),
-      intervalMs: SCRAPE_INTERVAL_MS,
-    });
+    return { ok: false, error: String(err) };
   }
 }
 
-// ---------- Server ----------
-app.use(cors());
-app.use(express.json());
+async function scrapeOnce() {
+  let collected = [];
+  let updatedLT = null;
+  let etag = null;
+  let lastModified = null;
+  let lastError = null;
 
-// Flights (array only)
-app.get("/flights", (req, res) => {
-  const data = readJSON(FLIGHTS_FILE, []);
-  res.json(data);
+  // 1) Try Cheerio on multiple URLs
+  for (const url of FIDS_URLS) {
+    const r = await cheerioAttempt(url);
+    if (r.ok && r.flights.length > 0) {
+      collected = collected.concat(r.flights);
+      updatedLT = updatedLT || r.updatedLT;
+      etag = etag || r.etag;
+      lastModified = lastModified || r.lastModified;
+    } else if (!r.ok && !lastError) {
+      lastError = r.error;
+    }
+  }
+
+  // 2) If nothing found, use Playwright (selector-agnostic text read)
+  if (collected.length === 0) {
+    try {
+      const pw = await scrapeWithPlaywright(FIDS_URLS[0]);
+      collected = pw.flights;
+      updatedLT = updatedLT || pw.updatedLT || null;
+    } catch (err) {
+      lastError = lastError || String(err);
+    }
+  }
+
+  // 3) Normalize & filter
+  collected = dedupeFlights(collected);
+  if (FILTER_DOMESTIC_ONLY) collected = filterDomestic(collected);
+
+  return { flights: collected, updatedLT, etag, lastModified, lastError };
+}
+
+let isScraping = false;
+
+async function scrapeAndMaybeSave({ manual = false } = {}) {
+  if (isScraping) return { skipped: true, reason: 'scrape_in_progress' };
+  isScraping = true;
+
+  const start = Date.now();
+  const prevFlights = readJsonSafe(FLIGHTS_PATH, []);
+  const prevMeta = readJsonSafe(META_PATH, {});
+
+  try {
+    const { flights, updatedLT, etag, lastModified, lastError } = await scrapeOnce();
+
+    const nextMeta = {
+      ...prevMeta,
+      rowCount: flights.length,
+      scrapedAt: new Date().toISOString(),
+      updatedLT: updatedLT || null,
+      etag: etag || prevMeta.etag || null,
+      lastModified: lastModified || prevMeta.lastModified || null,
+      lastError: lastError || null,
+      lastOk: !lastError ? new Date().toISOString() : prevMeta.lastOk || null,
+      manualTrigger: manual
+    };
+
+    const newHash = hashJson(flights);
+    const changed = newHash !== prevMeta.hash;
+
+    if (changed) {
+      writeJsonAtomic(FLIGHTS_PATH, flights);
+      nextMeta.hash = newHash;
+    } else {
+      nextMeta.hash = prevMeta.hash || newHash;
+    }
+    writeJsonAtomic(META_PATH, nextMeta);
+
+    isScraping = false;
+    return {
+      ok: true,
+      changed,
+      tookMs: Date.now() - start,
+      rowCount: flights.length,
+      updatedLT: nextMeta.updatedLT
+    };
+  } catch (err) {
+    const nextMeta = {
+      ...prevMeta,
+      scrapedAt: new Date().toISOString(),
+      lastError: String(err),
+      manualTrigger: manual
+    };
+    writeJsonAtomic(META_PATH, nextMeta);
+    isScraping = false;
+    return { ok: false, error: String(err) };
+  }
+}
+
+// ------------------------ Server ------------------------
+const app = express();
+app.use(cors({ origin: FRONTEND_ORIGIN === '*' ? true : [FRONTEND_ORIGIN] }));
+app.use(express.json({ limit: '256kb' }));
+app.use(morgan('tiny'));
+
+// Health
+app.get('/', (_req, res) => {
+  res.json({
+    service: 'VADA backend',
+    ok: true,
+    intervalMs: SCRAPE_INTERVAL_MS,
+    filterDomesticOnly: FILTER_DOMESTIC_ONLY
+  });
 });
 
-// Metadata
-app.get("/meta", (req, res) => {
-  const meta = readJSON(META_FILE, {
-    hash: null,
-    count: 0,
-    updatedAt: null,
-    lastError: null,
-    etag: null,
-    lastModified: null,
-    intervalMs: SCRAPE_INTERVAL_MS,
-  });
+// Flights
+app.get('/flights', (_req, res) => {
+  const flights = readJsonSafe(FLIGHTS_PATH, []);
+  res.json(flights);
+});
+
+// Meta
+app.get('/meta', (_req, res) => {
+  const meta = readJsonSafe(META_PATH, {});
   res.json(meta);
 });
 
-// Force refresh (optional)
-app.post("/refresh", async (req, res) => {
-  if (REFRESH_TOKEN && req.headers.authorization !== `Bearer ${REFRESH_TOKEN}`) {
-    return res.status(403).json({ error: "Unauthorized" });
+// Manual refresh
+function authRefresh(req) {
+  const q = req.query?.token;
+  const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const header = req.headers['x-refresh-token'];
+  return (q && q === REFRESH_TOKEN) || (bearer && bearer === REFRESH_TOKEN) || (header && header === REFRESH_TOKEN);
+}
+app.post('/refresh', async (req, res) => {
+  if (!REFRESH_TOKEN || !authRefresh(req)) {
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
-  await scrapeAndMaybeUpdate({ force: true });
+  const result = await scrapeAndMaybeSave({ manual: true });
+  res.json(result);
+});
+
+// Call logs (public write)
+app.post('/api/call-logs', (req, res) => {
+  const { userId, flightNo, action, note } = req.body || {};
+  if (!userId || !flightNo || !action) {
+    return res.status(400).json({ ok: false, error: 'userId, flightNo, action required' });
+  }
+  const normalizedAction = String(action).toUpperCase();
+  if (!['SS', 'BUS'].includes(normalizedAction)) {
+    return res.status(400).json({ ok: false, error: 'action must be SS or BUS' });
+  }
+
+  const logs = readJsonSafe(CALL_LOGS_PATH, []);
+  logs.push({
+    ts: new Date().toISOString(),
+    ip: req.headers['x-forwarded-for'] || req.socket.remoteAddress || null,
+    userId: String(userId),
+    flightNo: String(flightNo),
+    action: normalizedAction,
+    note: note ? String(note) : null
+  });
+  writeJsonAtomic(CALL_LOGS_PATH, logs);
   res.json({ ok: true });
 });
 
-// Call logs (unchanged from yours)
-app.post("/api/call-logs", (req, res) => {
-  const { userId, flight, type, timestamp } = req.body;
-  if (!userId || !flight || !type || !timestamp) {
-    return res.status(400).json({ error: "Missing required fields" });
+// Call logs (admin read)
+function authAdmin(req) {
+  const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const header = req.headers['x-admin-token'];
+  const query = req.query?.token;
+  return (ADMIN_TOKEN && (
+    bearer === ADMIN_TOKEN ||
+    header === ADMIN_TOKEN ||
+    query === ADMIN_TOKEN
+  ));
+}
+app.get('/api/call-logs', (req, res) => {
+  if (!authAdmin(req)) return res.status(401).json({ ok: false, error: 'unauthorized' });
+
+  const { since, limit, action, flightNo } = req.query;
+  let logs = readJsonSafe(CALL_LOGS_PATH, []);
+
+  if (since) {
+    const s = new Date(since).getTime() || 0;
+    logs = logs.filter(l => new Date(l.ts).getTime() >= s);
   }
-  const entry = { userId, flight, type, timestamp };
-  callLogs.push(entry);
-  writeJSON(LOG_FILE, callLogs);
-  res.json({ message: "Call logged successfully" });
+  if (action) {
+    const a = String(action).toUpperCase();
+    logs = logs.filter(l => l.action === a);
+  }
+  if (flightNo) {
+    const f = String(flightNo).toUpperCase();
+    logs = logs.filter(l => String(l.flightNo).toUpperCase() === f);
+  }
+  const n = Math.max(0, Math.min(1000, Number(limit || 500)));
+  res.json({ ok: true, count: Math.min(logs.length, n), logs: logs.slice(-n) });
 });
 
-app.get("/api/call-logs", (req, res) => {
-  const auth = req.headers["authorization"];
-  const token = auth?.split(" ")[1];
-  if (!ADMIN_TOKEN || token !== ADMIN_TOKEN) {
-    return res.status(403).json({ error: "Unauthorized" });
-  }
-  res.json(callLogs);
-});
+// Boot
+app.listen(PORT, async () => {
+  console.log(`[VADA] listening on ${PORT}`);
+  // Kick off an immediate scrape, then schedule
+  const first = await scrapeAndMaybeSave();
+  console.log('[VADA] first scrape:', first);
 
-// ---------- Startup ----------
-app.listen(PORT, () => {
-  console.log(`✅ Backend running on port ${PORT}`);
-  // First scrape immediately, then on interval
-  scrapeAndMaybeUpdate({ force: true });
-  setInterval(scrapeAndMaybeUpdate, SCRAPE_INTERVAL_MS);
+  setInterval(() => {
+    scrapeAndMaybeSave().then(r => {
+      if (!r.ok) console.error('[VADA] scrape error', r.error);
+    });
+  }, SCRAPE_INTERVAL_MS);
 });
