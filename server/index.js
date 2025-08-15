@@ -1,3 +1,8 @@
+// VADA backend — Cheerio-only scraper with robust text parsing
+
+process.on('unhandledRejection', (err) => console.error('[VADA] Unhandled Rejection:', err));
+process.on('uncaughtException', (err) => console.error('[VADA] Uncaught Exception:', err));
+
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
@@ -26,9 +31,10 @@ const FILTER_DOMESTIC_ONLY = (process.env.FILTER_DOMESTIC_ONLY ?? '1') === '1';
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 const REFRESH_TOKEN = process.env.REFRESH_TOKEN || ADMIN_TOKEN;
 
-// Try multiple URLs to be resilient
+// Try arrivals first, then homepage as fallback
 const FIDS_URLS = [
-  'https://www.fis.com.mv/index.php?webfids_type=arrivals'
+  'https://www.fis.com.mv/index.php?webfids_type=arrivals&webfids_airline=ALL&webfids_domesticinternational=ALL&webfids_passengercargo=passenger&webfids_waypoint=ALL&webfids_lang=1',
+  'https://www.fis.com.mv/'
 ];
 
 // ------------------------ Helpers ------------------------
@@ -77,29 +83,36 @@ async function cheerioAttempt(url) {
   const res = await axios.get(url, {
     timeout: 30000,
     headers: { 'User-Agent': 'Mozilla/5.0 (VADA scraper)' },
-    validateStatus: s => s >= 200 && s < 400
+    validateStatus: () => true // don't throw on 4xx/5xx
   });
-  const $ = cheerio.load(res.data);
-  const pageText = $('body').text();
+
+  const html = typeof res.data === 'string' ? res.data : '';
+  const $ = cheerio.load(html);
+  // Normalize whitespace; parsing uses BODY text (selector-agnostic)
+  const pageText = $('body').text().replace(/\s+/g, ' ').trim();
+
   const { flights, updatedLT } = parseFlightsFromText(pageText);
+
   return {
     flights,
     updatedLT,
     etag: res.headers.etag || null,
-    lastModified: res.headers['last-modified'] || null
+    lastModified: res.headers['last-modified'] || null,
+    httpStatus: res.status,
+    textSample: pageText.slice(0, 500) // for debugging when 0 rows
   };
 }
 
 async function scrapeOnce() {
   let collected = [];
-  let updatedLT = null;
-  let etag = null;
-  let lastModified = null;
-  let lastError = null;
+  let updatedLT = null, etag = null, lastModified = null, lastError = null;
+  let httpStatus = null, textSample = null;
 
   for (const url of FIDS_URLS) {
     try {
       const r = await cheerioAttempt(url);
+      httpStatus = httpStatus ?? r.httpStatus;
+      textSample = textSample ?? r.textSample;
       if (r.flights.length > 0) {
         collected = collected.concat(r.flights);
         updatedLT = updatedLT || r.updatedLT;
@@ -114,7 +127,7 @@ async function scrapeOnce() {
   collected = dedupeFlights(collected);
   if (FILTER_DOMESTIC_ONLY) collected = filterDomestic(collected);
 
-  return { flights: collected, updatedLT, etag, lastModified, lastError };
+  return { flights: collected, updatedLT, etag, lastModified, lastError, httpStatus, textSample };
 }
 
 let isScraping = false;
@@ -126,7 +139,7 @@ async function scrapeAndMaybeSave({ manual = false } = {}) {
   const start = Date.now();
   const prevMeta = readJsonSafe(META_PATH, {});
   try {
-    const { flights, updatedLT, etag, lastModified, lastError } = await scrapeOnce();
+    const { flights, updatedLT, etag, lastModified, lastError, httpStatus, textSample } = await scrapeOnce();
 
     const nextMeta = {
       ...prevMeta,
@@ -139,6 +152,15 @@ async function scrapeAndMaybeSave({ manual = false } = {}) {
       lastOk: !lastError ? new Date().toISOString() : prevMeta.lastOk || null,
       manualTrigger: manual
     };
+
+    if (flights.length === 0) {
+      nextMeta.debug = {
+        httpStatus: httpStatus ?? null,
+        textSample: textSample ?? null
+      };
+    } else {
+      delete nextMeta.debug;
+    }
 
     const newHash = hashJson(flights);
     const changed = newHash !== prevMeta.hash;
@@ -232,9 +254,17 @@ app.get('/api/call-logs', (req, res) => {
   res.json({ ok: true, count: Math.min(logs.length, n), logs: logs.slice(-n) });
 });
 
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
   console.log(`[VADA] listening on ${PORT}`);
-  const first = await scrapeAndMaybeSave();
-  console.log('[VADA] first scrape:', first);
-  setInterval(() => scrapeAndMaybeSave().then(r => { if (!r.ok) console.error('[VADA] scrape error', r.error); }), SCRAPE_INTERVAL_MS);
+
+  // Kick off a scrape but never crash process if it fails
+  scrapeAndMaybeSave()
+    .then((r) => console.log('[VADA] first scrape:', r))
+    .catch((e) => console.error('[VADA] first scrape error:', e));
+
+  setInterval(() => {
+    scrapeAndMaybeSave()
+      .then((r) => { if (!r.ok) console.error('[VADA] scrape error', r.error); })
+      .catch((e) => console.error('[VADA] interval scrape error', e));
+  }, SCRAPE_INTERVAL_MS);
 });
