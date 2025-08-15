@@ -1,61 +1,66 @@
-// server/scraper.js
 // Robust, selector-agnostic text parser for Velana FIDS pages.
-// No Playwright. No DOM selectors. It parses the page BODY text.
 
-/**
- * Extracts the "Updated: ... LT" timestamp line (if present) from the page text.
- * Example: "Updated: Friday 15 Aug, 2025 14:32 LT"
- */
 export function extractUpdatedLT(text) {
   const m = text.match(/Updated:\s*([^\n]+?)\s*LT/i);
   return m ? m[1].trim() : null;
 }
 
-/**
- * Parse flights from raw page text.
- *
- * We expect lines like:
- *   Q2 225 Dharavandhoo 13:20 13:29 DOM
- * Sometimes the status appears on the same line tail or the next line:
- *   LANDED | DELAYED | FINAL CALL | GATE CLOSED | BOARDING | DEPARTED | CANCELLED | ON TIME | SCHEDULED | ESTIMATED
- *
- * Captured fields:
- * - airline (e.g., Q2)
- * - number  (e.g., 225)
- * - origin_or_destination (e.g., Dharavandhoo)
- * - scheduled (HH:MM)
- * - estimated (HH:MM or null)
- * - terminal (DOM or T1/T2)
- * - status (nullable)
- */
 export function parseFlightsFromText(txt) {
-  const lines = txt.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  // Normalize whitespace and NBSPs
+  const norm = String(txt || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .trim();
 
-  // Flight line regex:
-  //  airline   number          place                sched      est?            terminal   tail (may carry status)
-  const flightLine = /^([A-Z0-9]{1,3})\s*([0-9]{2,4}[A-Z]?)\s+(.+?)\s+(\d{1,2}:\d{2})(?:\s+(\d{1,2}:\d{2}))?\s+(DOM|T\d)\s*(.*)$/i;
+  // Split on newlines conservatively
+  const lines = norm.split(/\n+/).map(s => s.trim()).filter(Boolean);
 
-  // Known status words (case-insensitive)
-  const statusLine = /^(LANDED|DELAYED|FINAL CALL|GATE CLOSED|BOARDING|DEPARTED|CANCELLED|ON TIME|SCHEDULED|ESTIMATED)$/i;
+  // Pattern A: terminal on the same line
+  const lineA = /^([A-Z0-9]{1,3})\s*([0-9]{2,4}[A-Z]?)\s+(.+?)\s+(\d{1,2}:\d{2})(?:\s+(\d{1,2}:\d{2}))?\s+(DOM|T\d)\s*(.*)$/i;
+
+  // Pattern B: terminal might be missing here; could appear in tail/next line
+  const lineB = /^([A-Z0-9]{1,3})\s*([0-9]{2,4}[A-Z]?)\s+(.+?)\s+(\d{1,2}:\d{2})(?:\s+(\d{1,2}:\d{2}))?\s*(.*)$/i;
+
+  const statusWord = /(LANDED|DELAYED|FINAL CALL|GATE CLOSED|BOARDING|DEPARTED|CANCELLED|ON TIME|SCHEDULED|ESTIMATED)/i;
+  const terminalWord = /(DOMESTIC|DOM|T1|T2)/i;
 
   const flights = [];
 
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
-    const m = l.match(flightLine);
-    if (!m) continue;
+    let airline, number, place, sched, est, terminal, tail = '';
 
-    let [, airline, number, place, sched, est, terminal, tail] = m;
+    let m = l.match(lineA);
+    if (m) {
+      [, airline, number, place, sched, est, terminal, tail] = m;
+    } else {
+      m = l.match(lineB);
+      if (!m) continue;
+      [, airline, number, place, sched, est, tail] = m;
+
+      // Try to infer terminal from tail or next line
+      const tailTerm = tail && tail.match(terminalWord);
+      if (tailTerm) terminal = tailTerm[1].toUpperCase().replace('DOMESTIC', 'DOM');
+      else if (lines[i + 1]) {
+        const nextTerm = lines[i + 1].match(terminalWord);
+        terminal = nextTerm ? nextTerm[1].toUpperCase().replace('DOMESTIC', 'DOM') : null;
+      }
+    }
+
     airline = airline.toUpperCase();
     number = number.toUpperCase();
-    terminal = terminal.toUpperCase();
+    terminal = terminal ? terminal.toUpperCase() : null;
 
+    // Status may be on tail or next line
     let status = null;
-    if (tail && statusLine.test(tail.trim())) {
-      status = tail.trim().toUpperCase();
-    } else if (lines[i + 1] && statusLine.test(lines[i + 1])) {
-      status = lines[i + 1].trim().toUpperCase();
+    if (tail && statusWord.test(tail)) {
+      status = tail.match(statusWord)[1].toUpperCase();
+    } else if (lines[i + 1] && statusWord.test(lines[i + 1])) {
+      status = lines[i + 1].match(statusWord)[1].toUpperCase();
     }
+
+    // Require terminal to be present (we only want proper arrival rows)
+    if (!terminal) continue;
 
     flights.push({
       airline,
@@ -69,8 +74,5 @@ export function parseFlightsFromText(txt) {
     });
   }
 
-  return {
-    updatedLT: extractUpdatedLT(txt),
-    flights
-  };
+  return { updatedLT: extractUpdatedLT(norm), flights };
 }
