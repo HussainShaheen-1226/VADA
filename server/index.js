@@ -6,7 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import axios from 'axios';
-import cheerio from 'cheerio';
+import * as cheerio from 'cheerio';
 import { parseFlightsFromText } from './scraper.js';
 
 const __filename = fileURLToPath(import.meta.url);
