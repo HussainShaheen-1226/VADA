@@ -1,4 +1,5 @@
 // Selector-agnostic text parser for Velana FIDS pages.
+// Works on the BODY inner text (resilient to markup changes).
 
 export function extractUpdatedLT(text) {
   const m = text.match(/Updated:\s*([^\n]+?)\s*LT/i);
@@ -6,13 +7,11 @@ export function extractUpdatedLT(text) {
 }
 
 export function parseFlightsFromText(txt) {
-  // Normalize whitespace and NBSPs
   const norm = String(txt || '')
-    .replace(/\u00a0/g, ' ')
-    .replace(/[ \t]+/g, ' ')
+    .replace(/\u00a0/g, ' ')   // NBSP -> space
+    .replace(/[ \t]+/g, ' ')   // collapse tabs/spaces
     .trim();
 
-  // Split on newlines conservatively
   const lines = norm.split(/\n+/).map(s => s.trim()).filter(Boolean);
 
   // Pattern A: terminal on the same line
@@ -38,7 +37,7 @@ export function parseFlightsFromText(txt) {
       if (!m) continue;
       [, airline, number, place, sched, est, tail] = m;
 
-      // Try to infer terminal from tail or next line
+      // infer terminal from tail or next line
       const tailTerm = tail && tail.match(terminalWord);
       if (tailTerm) terminal = tailTerm[1].toUpperCase().replace('DOMESTIC', 'DOM');
       else if (lines[i + 1]) {
@@ -59,7 +58,6 @@ export function parseFlightsFromText(txt) {
       status = lines[i + 1].match(statusWord)[1].toUpperCase();
     }
 
-    // Require terminal to be present
     if (!terminal || !airline || !number) continue;
 
     flights.push({
