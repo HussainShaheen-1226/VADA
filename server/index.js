@@ -1,4 +1,5 @@
 // VADA backend — Cheerio-only scraper; scrapes Domestic, International, and All
+
 process.on('unhandledRejection', (err) => console.error('[VADA] Unhandled Rejection:', err));
 process.on('uncaughtException', (err) => console.error('[VADA] Uncaught Exception:', err));
 
@@ -25,7 +26,9 @@ const CALL_LOGS_PATH = path.join(DATA_DIR, 'call-logs.json');
 
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || '*';
 const SCRAPE_INTERVAL_MS = Number(process.env.SCRAPE_INTERVAL_MS || 120_000);
-// Keep for backward compatibility: when 1, /flights returns only domestic by default
+
+// Back-compat: when 1, the stored flights file will contain only domestic.
+// You can still request '/flights?scope=international' if you set this to 0.
 const FILTER_DOMESTIC_ONLY = (process.env.FILTER_DOMESTIC_ONLY ?? '0') === '1';
 
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
@@ -63,7 +66,7 @@ function hashJson(value) {
   return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 function keyOfFlight(f) {
-  // unique-ish key; ignore category to dedupe across sources
+  // Unique-ish key; ignore category to dedupe across sources
   return `${f.flightNo}|${f.scheduled}|${f.origin_or_destination}|${f.terminal}`;
 }
 function dedupeFlights(arr) {
@@ -89,7 +92,7 @@ ensureFile(META_PATH, JSON.stringify({
   lastError: null,
   lastOk: null,
   tried: [],     // list of tried URLs with status
-  debug: null    // { httpStatus, textSample } for first 0-row response
+  debug: null    // { httpStatus, textSample, url } for first 0-row response
 }, null, 2));
 ensureFile(CALL_LOGS_PATH, '[]');
 
@@ -111,7 +114,6 @@ async function fetchAndParse(url, label) {
 
   const { flights, updatedLT } = parseFlightsFromText(bodyText);
 
-  // Tag with preliminary category (source label) + source URL for traceability
   const tagged = flights.map(f => ({
     ...f,
     category: categorizeByTerminal(f), // trust terminal ultimately
@@ -171,7 +173,7 @@ async function scrapeAndMaybeSave({ manual = false } = {}) {
   try {
     const { flights, updatedLT, tried, debug } = await scrapeOnce();
 
-    // Backward-compat default filtering:
+    // Backward-compat default filtering (optional)
     const finalFlights = FILTER_DOMESTIC_ONLY ? flights.filter(f => f.category === 'domestic') : flights;
 
     const nextMeta = {
@@ -221,16 +223,13 @@ app.get('/', (_req, res) => {
   res.json({ service: 'VADA backend', ok: true, intervalMs: SCRAPE_INTERVAL_MS, filterDomesticOnly: FILTER_DOMESTIC_ONLY });
 });
 
+// Optional runtime filter: /flights?scope=domestic|international|all
 app.get('/flights', (req, res) => {
-  // Optional runtime filter: /flights?scope=domestic|international|all
   const scope = String(req.query.scope || '').toLowerCase();
   let flights = readJsonSafe(FLIGHTS_PATH, []);
   if (scope === 'domestic') flights = flights.filter(f => f.category === 'domestic');
   else if (scope === 'international') flights = flights.filter(f => f.category === 'international');
-  else if (scope === 'all' || scope === '') {
-    // if FILTER_DOMESTIC_ONLY=1, the stored file already has only domestic;
-    // in that case, "all" just returns what's stored.
-  }
+  // 'all' or empty returns whatever is stored (subject to FILTER_DOMESTIC_ONLY at save time)
   res.json(flights);
 });
 
@@ -296,9 +295,11 @@ app.get('/api/call-logs', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`[VADA] listening on ${PORT}`);
+  // Fire and forget; never crash the server if scraping fails
   scrapeAndMaybeSave()
     .then((r) => console.log('[VADA] first scrape:', r))
     .catch((e) => console.error('[VADA] first scrape error:', e));
+
   setInterval(() => {
     scrapeAndMaybeSave()
       .then((r) => { if (!r.ok) console.error('[VADA] scrape error', r.error); })
