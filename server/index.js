@@ -33,8 +33,7 @@ const REFRESH_TOKEN = process.env.REFRESH_TOKEN || ADMIN_TOKEN;
 
 // Try arrivals first, then homepage as fallback
 const FIDS_URLS = [
-  'https://www.fis.com.mv/index.php?webfids_type=arrivals&webfids_airline=ALL&webfids_domesticinternational=ALL&webfids_passengercargo=passenger&webfids_waypoint=ALL&webfids_lang=1',
-  'https://www.fis.com.mv/'
+  'https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=ALL&webfids_lang=1&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL'
 ];
 
 // ------------------------ Helpers ------------------------
