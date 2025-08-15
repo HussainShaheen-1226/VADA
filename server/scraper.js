@@ -1,4 +1,4 @@
-// Robust, selector-agnostic text parser for Velana FIDS pages.
+// Selector-agnostic text parser for Velana FIDS pages.
 
 export function extractUpdatedLT(text) {
   const m = text.match(/Updated:\s*([^\n]+?)\s*LT/i);
@@ -47,8 +47,8 @@ export function parseFlightsFromText(txt) {
       }
     }
 
-    airline = airline.toUpperCase();
-    number = number.toUpperCase();
+    airline = airline?.toUpperCase();
+    number = number?.toUpperCase();
     terminal = terminal ? terminal.toUpperCase() : null;
 
     // Status may be on tail or next line
@@ -59,8 +59,8 @@ export function parseFlightsFromText(txt) {
       status = lines[i + 1].match(statusWord)[1].toUpperCase();
     }
 
-    // Require terminal to be present (we only want proper arrival rows)
-    if (!terminal) continue;
+    // Require terminal to be present
+    if (!terminal || !airline || !number) continue;
 
     flights.push({
       airline,
