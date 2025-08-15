@@ -1,17 +1,14 @@
-{
-  "name": "vada-backend",
-  "version": "2.3.0",
-  "private": true,
-  "type": "module",
-  "engines": { "node": ">=18" },
-  "scripts": {
-    "start": "node index.js"
+const FIDS_URLS = [
+  {
+    type: 'domestic',
+    url: 'https://www.fis.com.mv/index.php?webfids_type=arrivals&webfids_lang=1&webfids_domesticinternational=D&webfids_passengercargo=passenger&webfids_airline=ALL&webfids_waypoint=ALL&Submit=+UPDATE+'
   },
-  "dependencies": {
-    "axios": "^1.7.7",
-    "cheerio": "^1.0.0",
-    "cors": "^2.8.5",
-    "express": "^4.19.2",
-    "morgan": "^1.10.0"
+  {
+    type: 'international',
+    url: 'https://www.fis.com.mv/index.php?webfids_type=arrivals&webfids_lang=1&webfids_domesticinternational=I&webfids_passengercargo=passenger&webfids_airline=ALL&webfids_waypoint=ALL&Submit=+UPDATE+'
+  },
+  {
+    type: 'all',
+    url: 'https://www.fis.com.mv/index.php?webfids_type=arrivals&webfids_lang=1&webfids_domesticinternational=ALL&webfids_passengercargo=passenger&webfids_airline=ALL&webfids_waypoint=ALL&Submit=+UPDATE+'
   }
-}
+];
