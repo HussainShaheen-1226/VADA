@@ -1,27 +1,127 @@
-// Selector-agnostic text parser for Velana FIDS pages.
-// Works on the BODY inner text (resilient to markup changes).
+// HTML-table parser first (preferred), with text-mode fallback helpers.
+
+import * as cheerio from 'cheerio';
+
+// Utilities
+function clean(s) {
+  return String(s || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\s+\n/g, '\n')
+    .trim();
+}
+const STATUS_RX = /(LANDED|DELAYED|FINAL CALL|GATE CLOSED|BOARDING|DEPARTED|CANCELLED|ON TIME|SCHEDULED|ESTIMATED)/i;
+const TIME_RX = /\b(\d{1,2}:\d{2})\b/g;
+const FLIGHT_RX = /^([A-Z0-9]{1,3})\s*([0-9]{2,4}[A-Z]?)$/i;
+const TERM_RX = /^(DOM|T\d)$/i;
 
 export function extractUpdatedLT(text) {
   const m = text.match(/Updated:\s*([^\n]+?)\s*LT/i);
   return m ? m[1].trim() : null;
 }
 
-export function parseFlightsFromText(txt) {
-  const norm = String(txt || '')
-    .replace(/\u00a0/g, ' ')   // NBSP -> space
-    .replace(/[ \t]+/g, ' ')   // collapse tabs/spaces
-    .trim();
+// --------- PRIMARY: parse from HTML tables ----------
+export function parseFlightsFromHtml($) {
+  const flights = [];
+  const bodyText = clean($('body').text());
+  const updatedLT = extractUpdatedLT(bodyText);
 
+  $('table').each((_, tbl) => {
+    const $tbl = $(tbl);
+    // Skip obvious filter/legend tables (no <td> rows or very few columns)
+    const sampleRow = $tbl.find('tr').first();
+    const sampleCols = sampleRow.find('td,th').length;
+    if (sampleCols < 4) return;
+
+    $tbl.find('tr').each((__, tr) => {
+      const tds = $(tr).find('td');
+      if (tds.length < 4) return; // too small to be a flight row
+
+      const cells = tds.map((i, td) => clean($(td).text())).get();
+      const rowText = clean(cells.join(' '));
+
+      // Attempt to identify logical columns
+      // Heuristic: one cell looks like "Q2 225", a couple look like times, one looks like DOM/T1/T2.
+      let flightNo = null, airline = null, number = null, terminal = null;
+      let scheduled = null, estimated = null, status = null, place = null;
+
+      // find terminal cell
+      const termIdx = cells.findIndex(c => TERM_RX.test(c));
+      if (termIdx !== -1) terminal = cells[termIdx].toUpperCase();
+
+      // find times
+      const times = rowText.match(TIME_RX) || [];
+      if (times.length >= 1) scheduled = times[0];
+      if (times.length >= 2) estimated = times[1];
+
+      // find status word
+      const sMatch = rowText.match(STATUS_RX);
+      if (sMatch) status = sMatch[1].toUpperCase();
+
+      // find flight cell
+      let flightIdx = cells.findIndex(c => FLIGHT_RX.test(c));
+      if (flightIdx === -1) {
+        // sometimes airline & number in two cells
+        for (let i = 0; i < cells.length - 1; i++) {
+          const combo = clean(`${cells[i]} ${cells[i + 1]}`);
+          if (FLIGHT_RX.test(combo)) { flightIdx = i; cells[i] = combo; break; }
+        }
+      }
+      if (flightIdx !== -1) {
+        const m = cells[flightIdx].match(FLIGHT_RX);
+        airline = m[1].toUpperCase();
+        number = m[2].toUpperCase();
+        flightNo = `${airline} ${number}`;
+      }
+
+      // place/origin: best guess = text chunk between flight and first time/terminal
+      if (flightIdx !== -1) {
+        // look forward until we hit a time or terminal cell
+        let end = cells.length;
+        const firstTimeIdx = cells.findIndex(c => TIME_RX.test(c));
+        if (firstTimeIdx !== -1) end = Math.min(end, firstTimeIdx);
+        if (termIdx !== -1) end = Math.min(end, termIdx);
+        if (end > flightIdx + 1) {
+          place = clean(cells.slice(flightIdx + 1, end).join(' '));
+        }
+      }
+      if (!place) {
+        // fallback: longest non-time, non-terminal cell that isn't the flight cell
+        const candidates = cells
+          .map((c, i) => ({ c, i }))
+          .filter(({ c, i }) =>
+            i !== flightIdx && !TIME_RX.test(c) && !TERM_RX.test(c) && !FLIGHT_RX.test(c) && c.length > 1);
+        if (candidates.length) {
+          place = candidates.reduce((a, b) => (a.c.length > b.c.length ? a : b)).c;
+        }
+      }
+
+      // accept only plausible rows
+      if (flightNo && terminal && scheduled) {
+        flights.push({
+          airline,
+          flightNo,
+          origin_or_destination: place || null,
+          scheduled,
+          estimated: estimated || null,
+          terminal,
+          isDomestic: terminal === 'DOM',
+          status: status || null
+        });
+      }
+    });
+  });
+
+  return { updatedLT, flights };
+}
+
+// --------- FALLBACK: parse from page text ----------
+export function parseFlightsFromText(txt) {
+  const norm = clean(txt);
   const lines = norm.split(/\n+/).map(s => s.trim()).filter(Boolean);
 
-  // Pattern A: terminal on the same line
   const lineA = /^([A-Z0-9]{1,3})\s*([0-9]{2,4}[A-Z]?)\s+(.+?)\s+(\d{1,2}:\d{2})(?:\s+(\d{1,2}:\d{2}))?\s+(DOM|T\d)\s*(.*)$/i;
-
-  // Pattern B: terminal might be missing here; could appear in tail/next line
   const lineB = /^([A-Z0-9]{1,3})\s*([0-9]{2,4}[A-Z]?)\s+(.+?)\s+(\d{1,2}:\d{2})(?:\s+(\d{1,2}:\d{2}))?\s*(.*)$/i;
-
-  const statusWord = /(LANDED|DELAYED|FINAL CALL|GATE CLOSED|BOARDING|DEPARTED|CANCELLED|ON TIME|SCHEDULED|ESTIMATED)/i;
-  const terminalWord = /(DOMESTIC|DOM|T1|T2)/i;
 
   const flights = [];
 
@@ -37,11 +137,10 @@ export function parseFlightsFromText(txt) {
       if (!m) continue;
       [, airline, number, place, sched, est, tail] = m;
 
-      // infer terminal from tail or next line
-      const tailTerm = tail && tail.match(terminalWord);
+      const tailTerm = tail && tail.match(/(DOMESTIC|DOM|T1|T2)/i);
       if (tailTerm) terminal = tailTerm[1].toUpperCase().replace('DOMESTIC', 'DOM');
       else if (lines[i + 1]) {
-        const nextTerm = lines[i + 1].match(terminalWord);
+        const nextTerm = lines[i + 1].match(/(DOMESTIC|DOM|T1|T2)/i);
         terminal = nextTerm ? nextTerm[1].toUpperCase().replace('DOMESTIC', 'DOM') : null;
       }
     }
@@ -50,13 +149,9 @@ export function parseFlightsFromText(txt) {
     number = number?.toUpperCase();
     terminal = terminal ? terminal.toUpperCase() : null;
 
-    // Status may be on tail or next line
     let status = null;
-    if (tail && statusWord.test(tail)) {
-      status = tail.match(statusWord)[1].toUpperCase();
-    } else if (lines[i + 1] && statusWord.test(lines[i + 1])) {
-      status = lines[i + 1].match(statusWord)[1].toUpperCase();
-    }
+    if (tail && STATUS_RX.test(tail)) status = tail.match(STATUS_RX)[1].toUpperCase();
+    else if (lines[i + 1] && STATUS_RX.test(lines[i + 1])) status = lines[i + 1].match(STATUS_RX)[1].toUpperCase();
 
     if (!terminal || !airline || !number) continue;
 
