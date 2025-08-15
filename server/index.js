@@ -31,9 +31,11 @@ const FILTER_DOMESTIC_ONLY = (process.env.FILTER_DOMESTIC_ONLY ?? '1') === '1';
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 const REFRESH_TOKEN = process.env.REFRESH_TOKEN || ADMIN_TOKEN;
 
-// Try arrivals first, then homepage as fallback
+// ✅ Direct "post-Update" Arrivals URL (returns the actual list)
+// We keep homepage as a final fallback for resiliency.
 const FIDS_URLS = [
-  'https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=ALL&webfids_lang=1&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL'
+  'https://www.fis.com.mv/index.php?Submit=+UPDATE+&webfids_airline=ALL&webfids_domesticinternational=ALL&webfids_passengercargo=passenger&webfids_type=arrivals&webfids_waypoint=ALL&webfids_lang=1',
+  'https://www.fis.com.mv/'
 ];
 
 // ------------------------ Helpers ------------------------
