@@ -1,130 +1,17 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Velana Arrivals Departure Assistant (VADA)</title>
-  <link rel="stylesheet" href="styles.css" />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VADA - Velana Arrivals Departure Assistant</title>
+    <link rel="stylesheet" href="/index.css" />
 </head>
 <body>
-  <div class="container">
-    <h1>Velana Arrivals Departure Assistant (VADA)</h1>
-
-    <button id="updateBtn">🔄 Update Flights</button>
-
-    <div class="loader">Loading flights...</div>
-
-    <table style="display: none">
-      <thead>
-        <tr>
-          <th>Airline</th>
-          <th>Flight</th>
-          <th>Route</th>
-          <th>STA</th>
-          <th>ETD</th>
-          <th>Status</th>
-          <th>SS</th>
-          <th>BUS</th>
-        </tr>
-      </thead>
-      <tbody id="flight-body">
-        <!-- Flight rows will be inserted here -->
-      </tbody>
-    </table>
-
-    <div class="no-flights" style="display: none">No flights available</div>
-  </div>
-
-  <script>
-    const table = document.querySelector("table");
-    const loader = document.querySelector(".loader");
-    const noFlights = document.querySelector(".no-flights");
-    const tbody = document.getElementById("flight-body");
-    const updateBtn = document.getElementById("updateBtn");
-
-    let userId = localStorage.getItem("userId");
-    let storedTime = localStorage.getItem("userIdTime");
-    const now = new Date().getTime();
-
-    if (!userId || !storedTime || now - parseInt(storedTime) > 14 * 24 * 60 * 60 * 1000) {
-      userId = prompt("Enter your ID:");
-      if (userId) {
-        localStorage.setItem("userId", userId);
-        localStorage.setItem("userIdTime", now.toString());
-      }
-    }
-
-    function getAirline(flightNo) {
-      if (!flightNo) return '—';
-      const code = flightNo.slice(0, 2).toUpperCase();
-      if (code === 'Q2') return 'Maldivian';
-      if (code === 'NR') return 'Manta Air';
-      if (code === 'VP') return 'Villa Air';
-      return '—';
-    }
-
-    function loadFlights() {
-      loader.style.display = "block";
-      table.style.display = "none";
-      noFlights.style.display = "none";
-      tbody.innerHTML = "";
-
-      fetch("https://vada-2db9.onrender.com/flights")
-        .then(res => res.json())
-        .then(flights => {
-          loader.style.display = "none";
-
-          if (!flights.length) {
-            noFlights.style.display = "block";
-            return;
-          }
-
-          table.style.display = "table";
-
-          flights.forEach((flight, index) => {
-            const flightNo = flight.flightNo || flight.flight || '';
-            const airline = getAirline(flightNo);
-
-            const tr = document.createElement("tr");
-
-            tr.innerHTML = `
-              <td>${airline}</td>
-              <td>${flightNo || '—'}</td>
-              <td>${flight.origin || flight.route || '—'}</td>
-              <td>${flight.sta || flight.scheduledTime || '—'}</td>
-              <td>${flight.etd || flight.estimatedTime || '—'}</td>
-              <td>${flight.status || '—'}</td>
-              <td>
-                <button onclick="handleCall(${index}, 'ss')">SS</button>
-                <div class="call-time" id="ss-${index}"></div>
-              </td>
-              <td>
-                <button onclick="handleCall(${index}, 'bus')">BUS</button>
-                <div class="call-time" id="bus-${index}"></div>
-              </td>
-            `;
-
-            tbody.appendChild(tr);
-          });
-        })
-        .catch(err => {
-          console.error("Error fetching flights:", err);
-          loader.innerText = "Error loading flights.";
-        });
-    }
-
-    function handleCall(index, type) {
-      const time = new Date().toLocaleTimeString();
-      const display = document.getElementById(`${type}-${index}`);
-      display.innerText = `${time} (${userId})`;
-    }
-
-    updateBtn.addEventListener("click", () => {
-      loadFlights();
-    });
-
-    // Initial load
-    loadFlights();
-  </script>
+    <div id="app">
+        <h1>VADA - Velana Arrivals Departure Assistant</h1>
+        <div id="loading" style="display:none;">Loading flight data...</div>
+        <div id="flights-container"></div>
+    </div>
+    <script src="/script.js"></script>
 </body>
 </html>
