@@ -12,7 +12,7 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
-import { parseFlightsFromText } from './scraper.js';
+import { parseFlightsFromHtml, parseFlightsFromText } from './scraper.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,7 +28,6 @@ const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || '*';
 const SCRAPE_INTERVAL_MS = Number(process.env.SCRAPE_INTERVAL_MS || 120_000);
 
 // Back-compat: when 1, the stored flights file will contain only domestic.
-// You can still request '/flights?scope=international' if you set this to 0.
 const FILTER_DOMESTIC_ONLY = (process.env.FILTER_DOMESTIC_ONLY ?? '0') === '1';
 
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
@@ -66,7 +65,6 @@ function hashJson(value) {
   return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 function keyOfFlight(f) {
-  // Unique-ish key; ignore category to dedupe across sources
   return `${f.flightNo}|${f.scheduled}|${f.origin_or_destination}|${f.terminal}`;
 }
 function dedupeFlights(arr) {
@@ -78,7 +76,6 @@ function dedupeFlights(arr) {
   return [...map.values()];
 }
 function categorizeByTerminal(f) {
-  // Final category from actual terminal; sourceLabel is advisory only
   return f.terminal === 'DOM' ? 'domestic' : 'international';
 }
 
@@ -91,8 +88,8 @@ ensureFile(META_PATH, JSON.stringify({
   updatedLT: null,
   lastError: null,
   lastOk: null,
-  tried: [],     // list of tried URLs with status
-  debug: null    // { httpStatus, textSample, url } for first 0-row response
+  tried: [],
+  debug: null
 }, null, 2));
 ensureFile(CALL_LOGS_PATH, '[]');
 
@@ -110,13 +107,21 @@ async function fetchAndParse(url, label) {
 
   const html = typeof res.data === 'string' ? res.data : '';
   const $ = cheerio.load(html);
-  const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
 
-  const { flights, updatedLT } = parseFlightsFromText(bodyText);
+  // 1) Try strict HTML-table parsing
+  let { flights, updatedLT } = parseFlightsFromHtml($);
+
+  // 2) Fallback: text-mode parse (in case table markup is unusual)
+  if (flights.length === 0) {
+    const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
+    const r = parseFlightsFromText(bodyText);
+    flights = r.flights;
+    updatedLT = updatedLT || r.updatedLT;
+  }
 
   const tagged = flights.map(f => ({
     ...f,
-    category: categorizeByTerminal(f), // trust terminal ultimately
+    category: categorizeByTerminal(f),
     sourceLabel: label,
     sourceUrl: url
   }));
@@ -126,7 +131,8 @@ async function fetchAndParse(url, label) {
     url,
     status: res.status,
     updatedLT,
-    textSample: flights.length ? null : bodyText.slice(0, 800),
+    // keep snippet ONLY when no rows (debug aid)
+    textSample: tagged.length ? null : $('body').text().slice(0, 800),
     flights: tagged
   };
 }
@@ -173,7 +179,6 @@ async function scrapeAndMaybeSave({ manual = false } = {}) {
   try {
     const { flights, updatedLT, tried, debug } = await scrapeOnce();
 
-    // Backward-compat default filtering (optional)
     const finalFlights = FILTER_DOMESTIC_ONLY ? flights.filter(f => f.category === 'domestic') : flights;
 
     const nextMeta = {
@@ -229,7 +234,6 @@ app.get('/flights', (req, res) => {
   let flights = readJsonSafe(FLIGHTS_PATH, []);
   if (scope === 'domestic') flights = flights.filter(f => f.category === 'domestic');
   else if (scope === 'international') flights = flights.filter(f => f.category === 'international');
-  // 'all' or empty returns whatever is stored (subject to FILTER_DOMESTIC_ONLY at save time)
   res.json(flights);
 });
 
@@ -295,11 +299,9 @@ app.get('/api/call-logs', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`[VADA] listening on ${PORT}`);
-  // Fire and forget; never crash the server if scraping fails
   scrapeAndMaybeSave()
     .then((r) => console.log('[VADA] first scrape:', r))
     .catch((e) => console.error('[VADA] first scrape error:', e));
-
   setInterval(() => {
     scrapeAndMaybeSave()
       .then((r) => { if (!r.ok) console.error('[VADA] scrape error', r.error); })
