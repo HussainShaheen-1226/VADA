@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import axios from 'axios';
 import cheerio from 'cheerio';
-import { scrapeWithPlaywright, parseFlightsFromText } from './scraper.js';
+import { parseFlightsFromText } from './scraper.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,27 +24,20 @@ const SCRAPE_INTERVAL_MS = Number(process.env.SCRAPE_INTERVAL_MS || 120_000);
 const FILTER_DOMESTIC_ONLY = (process.env.FILTER_DOMESTIC_ONLY ?? '1') === '1';
 
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
-const REFRESH_TOKEN = process.env.REFRESH_TOKEN || ADMIN_TOKEN; // allow same
+const REFRESH_TOKEN = process.env.REFRESH_TOKEN || ADMIN_TOKEN;
 
 // Try multiple URLs to be resilient
 const FIDS_URLS = [
-  'https://www.fis.com.mv/',            // landing page
-  'https://www.fis.com.mv/WebFids.php'  // classic endpoint
+  'https://www.fis.com.mv/',
+  'https://www.fis.com.mv/WebFids.php'
 ];
 
 // ------------------------ Helpers ------------------------
 function ensureFile(file, defaultContent) {
-  if (!fs.existsSync(file)) {
-    fs.writeFileSync(file, defaultContent, 'utf8');
-  }
+  if (!fs.existsSync(file)) fs.writeFileSync(file, defaultContent, 'utf8');
 }
 function readJsonSafe(file, fallback) {
-  try {
-    const raw = fs.readFileSync(file, 'utf8');
-    return JSON.parse(raw);
-  } catch {
-    return fallback;
-  }
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
 }
 function writeJsonAtomic(file, data) {
   const tmp = `${file}.tmp`;
@@ -80,28 +73,22 @@ ensureFile(META_PATH, JSON.stringify({
 }, null, 2));
 ensureFile(CALL_LOGS_PATH, '[]');
 
-// ------------------------ Scraping ------------------------
+// ------------------------ Scraping (Cheerio-only) ------------------------
 async function cheerioAttempt(url) {
-  try {
-    const res = await axios.get(url, {
-      timeout: 30000,
-      headers: { 'User-Agent': 'Mozilla/5.0 (VADA scraper)' },
-      validateStatus: s => s >= 200 && s < 400
-    });
-    const $ = cheerio.load(res.data);
-    const pageText = $('body').text();
-    const { flights, updatedLT } = parseFlightsFromText(pageText);
-
-    return {
-      ok: true,
-      flights,
-      updatedLT,
-      etag: res.headers.etag || null,
-      lastModified: res.headers['last-modified'] || null,
-    };
-  } catch (err) {
-    return { ok: false, error: String(err) };
-  }
+  const res = await axios.get(url, {
+    timeout: 30000,
+    headers: { 'User-Agent': 'Mozilla/5.0 (VADA scraper)' },
+    validateStatus: s => s >= 200 && s < 400
+  });
+  const $ = cheerio.load(res.data);
+  const pageText = $('body').text();
+  const { flights, updatedLT } = parseFlightsFromText(pageText);
+  return {
+    flights,
+    updatedLT,
+    etag: res.headers.etag || null,
+    lastModified: res.headers['last-modified'] || null
+  };
 }
 
 async function scrapeOnce() {
@@ -111,31 +98,20 @@ async function scrapeOnce() {
   let lastModified = null;
   let lastError = null;
 
-  // 1) Try Cheerio on multiple URLs
   for (const url of FIDS_URLS) {
-    const r = await cheerioAttempt(url);
-    if (r.ok && r.flights.length > 0) {
-      collected = collected.concat(r.flights);
-      updatedLT = updatedLT || r.updatedLT;
-      etag = etag || r.etag;
-      lastModified = lastModified || r.lastModified;
-    } else if (!r.ok && !lastError) {
-      lastError = r.error;
-    }
-  }
-
-  // 2) If nothing found, use Playwright (selector-agnostic text read)
-  if (collected.length === 0) {
     try {
-      const pw = await scrapeWithPlaywright(FIDS_URLS[0]);
-      collected = pw.flights;
-      updatedLT = updatedLT || pw.updatedLT || null;
+      const r = await cheerioAttempt(url);
+      if (r.flights.length > 0) {
+        collected = collected.concat(r.flights);
+        updatedLT = updatedLT || r.updatedLT;
+        etag = etag || r.etag;
+        lastModified = lastModified || r.lastModified;
+      }
     } catch (err) {
       lastError = lastError || String(err);
     }
   }
 
-  // 3) Normalize & filter
   collected = dedupeFlights(collected);
   if (FILTER_DOMESTIC_ONLY) collected = filterDomestic(collected);
 
@@ -149,9 +125,7 @@ async function scrapeAndMaybeSave({ manual = false } = {}) {
   isScraping = true;
 
   const start = Date.now();
-  const prevFlights = readJsonSafe(FLIGHTS_PATH, []);
   const prevMeta = readJsonSafe(META_PATH, {});
-
   try {
     const { flights, updatedLT, etag, lastModified, lastError } = await scrapeOnce();
 
@@ -179,20 +153,9 @@ async function scrapeAndMaybeSave({ manual = false } = {}) {
     writeJsonAtomic(META_PATH, nextMeta);
 
     isScraping = false;
-    return {
-      ok: true,
-      changed,
-      tookMs: Date.now() - start,
-      rowCount: flights.length,
-      updatedLT: nextMeta.updatedLT
-    };
+    return { ok: true, changed, tookMs: Date.now() - start, rowCount: flights.length, updatedLT: nextMeta.updatedLT };
   } catch (err) {
-    const nextMeta = {
-      ...prevMeta,
-      scrapedAt: new Date().toISOString(),
-      lastError: String(err),
-      manualTrigger: manual
-    };
+    const nextMeta = { ...prevMeta, scrapedAt: new Date().toISOString(), lastError: String(err), manualTrigger: manual };
     writeJsonAtomic(META_PATH, nextMeta);
     isScraping = false;
     return { ok: false, error: String(err) };
@@ -205,29 +168,13 @@ app.use(cors({ origin: FRONTEND_ORIGIN === '*' ? true : [FRONTEND_ORIGIN] }));
 app.use(express.json({ limit: '256kb' }));
 app.use(morgan('tiny'));
 
-// Health
 app.get('/', (_req, res) => {
-  res.json({
-    service: 'VADA backend',
-    ok: true,
-    intervalMs: SCRAPE_INTERVAL_MS,
-    filterDomesticOnly: FILTER_DOMESTIC_ONLY
-  });
+  res.json({ service: 'VADA backend', ok: true, intervalMs: SCRAPE_INTERVAL_MS, filterDomesticOnly: FILTER_DOMESTIC_ONLY });
 });
 
-// Flights
-app.get('/flights', (_req, res) => {
-  const flights = readJsonSafe(FLIGHTS_PATH, []);
-  res.json(flights);
-});
+app.get('/flights', (_req, res) => res.json(readJsonSafe(FLIGHTS_PATH, [])));
+app.get('/meta', (_req, res) => res.json(readJsonSafe(META_PATH, {})));
 
-// Meta
-app.get('/meta', (_req, res) => {
-  const meta = readJsonSafe(META_PATH, {});
-  res.json(meta);
-});
-
-// Manual refresh
 function authRefresh(req) {
   const q = req.query?.token;
   const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
@@ -235,23 +182,15 @@ function authRefresh(req) {
   return (q && q === REFRESH_TOKEN) || (bearer && bearer === REFRESH_TOKEN) || (header && header === REFRESH_TOKEN);
 }
 app.post('/refresh', async (req, res) => {
-  if (!REFRESH_TOKEN || !authRefresh(req)) {
-    return res.status(401).json({ ok: false, error: 'unauthorized' });
-  }
-  const result = await scrapeAndMaybeSave({ manual: true });
-  res.json(result);
+  if (!REFRESH_TOKEN || !authRefresh(req)) return res.status(401).json({ ok: false, error: 'unauthorized' });
+  res.json(await scrapeAndMaybeSave({ manual: true }));
 });
 
-// Call logs (public write)
 app.post('/api/call-logs', (req, res) => {
   const { userId, flightNo, action, note } = req.body || {};
-  if (!userId || !flightNo || !action) {
-    return res.status(400).json({ ok: false, error: 'userId, flightNo, action required' });
-  }
+  if (!userId || !flightNo || !action) return res.status(400).json({ ok: false, error: 'userId, flightNo, action required' });
   const normalizedAction = String(action).toUpperCase();
-  if (!['SS', 'BUS'].includes(normalizedAction)) {
-    return res.status(400).json({ ok: false, error: 'action must be SS or BUS' });
-  }
+  if (!['SS', 'BUS'].includes(normalizedAction)) return res.status(400).json({ ok: false, error: 'action must be SS or BUS' });
 
   const logs = readJsonSafe(CALL_LOGS_PATH, []);
   logs.push({
@@ -266,16 +205,11 @@ app.post('/api/call-logs', (req, res) => {
   res.json({ ok: true });
 });
 
-// Call logs (admin read)
 function authAdmin(req) {
   const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   const header = req.headers['x-admin-token'];
   const query = req.query?.token;
-  return (ADMIN_TOKEN && (
-    bearer === ADMIN_TOKEN ||
-    header === ADMIN_TOKEN ||
-    query === ADMIN_TOKEN
-  ));
+  return (ADMIN_TOKEN && (bearer === ADMIN_TOKEN || header === ADMIN_TOKEN || query === ADMIN_TOKEN));
 }
 app.get('/api/call-logs', (req, res) => {
   if (!authAdmin(req)) return res.status(401).json({ ok: false, error: 'unauthorized' });
@@ -299,16 +233,9 @@ app.get('/api/call-logs', (req, res) => {
   res.json({ ok: true, count: Math.min(logs.length, n), logs: logs.slice(-n) });
 });
 
-// Boot
 app.listen(PORT, async () => {
   console.log(`[VADA] listening on ${PORT}`);
-  // Kick off an immediate scrape, then schedule
   const first = await scrapeAndMaybeSave();
   console.log('[VADA] first scrape:', first);
-
-  setInterval(() => {
-    scrapeAndMaybeSave().then(r => {
-      if (!r.ok) console.error('[VADA] scrape error', r.error);
-    });
-  }, SCRAPE_INTERVAL_MS);
+  setInterval(() => scrapeAndMaybeSave().then(r => { if (!r.ok) console.error('[VADA] scrape error', r.error); }), SCRAPE_INTERVAL_MS);
 });
