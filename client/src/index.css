@@ -1,66 +1,67 @@
-:root {
-  --bg: #0b1020;
-  --panel: rgba(255,255,255,0.06);
-  --card: rgba(255,255,255,0.08);
-  --text: #fff;
-  --muted: #cfd3dc;
-  --accent: #ffd54a; /* yellow */
-  --green: #5bd089;
-  --red: #ff6b6b;
-  --blue: #66b0ff;
-}
-
-* { box-sizing: border-box; }
-html, body, #root { height: 100%; }
+/* Background */
 body {
-  margin: 0; color: var(--text); background: var(--bg);
-  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background-image: url('/background.png');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    color: white;
 }
 
-.container { max-width: 1200px; margin: 0 auto; padding: 16px; }
-
-.topbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 16px; background: var(--panel); border-radius: 12px; margin-bottom: 12px;
-  backdrop-filter: blur(6px);
-}
-.topbar h1 { font-size: 18px; margin: 0; font-weight: 600; }
-.live-dot { font-size: 12px; padding: 4px 10px; border-radius: 999px; background: #3b4157; }
-.live-dot.on { background: var(--green); color: #05140c; }
-.live-dot.off { background: var(--red); }
-
-.table-wrap {
-  background: var(--card); border-radius: 12px; overflow: hidden; border: 1px solid rgba(255,255,255,0.08);
+/* Container */
+#app {
+    background: rgba(0, 0, 0, 0.5);
+    padding: 20px;
+    min-height: 100vh;
 }
 
-.vada-table { width: 100%; border-collapse: collapse; }
-.vada-table thead th {
-  position: sticky; top: 0; background: rgba(0,0,0,0.25); backdrop-filter: blur(4px);
-  text-align: left; font-weight: 600; padding: 12px 14px; font-size: 13px;
+/* Title */
+h1 {
+    text-align: center;
+    margin-bottom: 20px;
 }
-.vada-table tbody td {
-  padding: 12px 14px; border-top: 1px solid rgba(255,255,255,0.07); font-size: 14px;
+
+/* Flights table */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+    background: rgba(255, 255, 255, 0.9);
+    color: black;
+    border-radius: 8px;
+    overflow: hidden;
 }
-.vada-table tbody tr:hover { background: rgba(255,255,255,0.05); }
 
-.status { padding: 4px 10px; border-radius: 999px; background: #2a2f43; font-size: 12px; }
-.status.landed { background: var(--green); color: #082310; }
-.status.delayed { background: var(--red); }
-.status.cancelled { background: #999; color: #111; }
-.status.boarding, .status.ontime { background: var(--blue); }
-
-.btn {
-  display: inline-block; text-decoration: none; font-weight: 700;
-  padding: 6px 12px; border-radius: 8px; font-size: 13px; line-height: 1;
-  border: 1px solid rgba(0,0,0,0.2); box-shadow: 0 1px 0 rgba(255,255,255,0.1) inset;
+th, td {
+    padding: 12px;
+    border: 1px solid #ddd;
+    text-align: center;
 }
-.btn.ss  { background: var(--accent); color: #1b1400; }
-.btn.bus { background: var(--accent); color: #1b1400; margin-left: 4px; }
 
-.stamp { font-size: 11px; opacity: .75; margin-top: 6px; }
+th {
+    background-color: #333;
+    color: white;
+}
 
-.muted { color: var(--muted); text-align: center; padding: 24px; }
-@media (max-width: 720px) {
-  .vada-table thead th, .vada-table tbody td { padding: 10px 12px; font-size: 13px; }
-  .topbar { flex-direction: column; gap: 8px; align-items: flex-start; }
+/* Buttons */
+button {
+    background-color: yellow;
+    color: black;
+    padding: 6px 12px;
+    border: none;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+button:hover {
+    opacity: 0.8;
+}
+
+/* Loading */
+#loading {
+    text-align: center;
+    font-size: 18px;
+    font-weight: bold;
 }
