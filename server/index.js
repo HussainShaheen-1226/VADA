@@ -1,4 +1,4 @@
-// VADA v3 backend — Arr/Dep scraping, SQLite, Logs, My Flights, PSM fan-out, Web Push, Admin session.
+// VADA backend (push-safe): no crash if VAPID envs missing
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
@@ -12,40 +12,41 @@ import { scrapeAll } from './scraper.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ---- env ----
+// ---- env
 const PORT = Number(process.env.PORT || 10000);
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || '*';
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'change-me';
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || ''; // optional for /refresh
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 const SCRAPE_INTERVAL_MS = Number(process.env.SCRAPE_INTERVAL_MS || 120000);
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || '';
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:ops@example.com';
 const SESSION_SECRET = process.env.SESSION_SECRET || 'vada-secret';
 
-webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+// ---- web push (guarded)
+const HAVE_VAPID = !!(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+if (HAVE_VAPID) {
+  webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+  console.log('Web Push: enabled');
+} else {
+  console.warn('Web Push: disabled (missing VAPID_PUBLIC_KEY or VAPID_PRIVATE_KEY)');
+}
 
-// ---- helpers ----
-// Maldives time (UTC+5): we only need HH:mm for T-15 compare
-function maleNow() { return new Date(Date.now() + 5*60*60*1000); }
-function fmtHHMM(d) { return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; }
-
-// ---- db ----
+// ---- db
 const db = new Database(path.join(__dirname, 'vada.db'));
 db.pragma('journal_mode = WAL');
 db.exec(`
 CREATE TABLE IF NOT EXISTS flights (
   id INTEGER PRIMARY KEY,
-  type TEXT,  -- 'arr' | 'dep'
+  type TEXT,
   flightNo TEXT,
   origin_or_destination TEXT,
-  scheduled TEXT,   -- HH:mm
-  estimated TEXT,   -- HH:mm or NULL
+  scheduled TEXT,
+  estimated TEXT,
   terminal TEXT,
   status TEXT,
-  category TEXT,    -- 'domestic' | 'international'
-  updatedLT TEXT
+  category TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_flights_type ON flights(type);
 
@@ -55,17 +56,16 @@ CREATE TABLE IF NOT EXISTS call_logs (
   flightNo TEXT,
   scheduled TEXT,
   estimated TEXT,
-  action TEXT,   -- SS | BUS | FP | LP
-  type TEXT,     -- arr | dep
+  action TEXT,
+  type TEXT,
   ts TEXT,
   UNIQUE(userId, flightNo, scheduled, action, type)
 );
-CREATE INDEX IF NOT EXISTS idx_logs_ts ON call_logs(ts);
 
 CREATE TABLE IF NOT EXISTS my_flights (
   id INTEGER PRIMARY KEY,
   userId TEXT,
-  type TEXT,       -- arr | dep
+  type TEXT,
   flightNo TEXT,
   scheduled TEXT,
   UNIQUE(userId, type, flightNo, scheduled)
@@ -97,8 +97,8 @@ CREATE TABLE IF NOT EXISTS push_dedupe (
 
 const q = {
   clearType: db.prepare(`DELETE FROM flights WHERE type=?`),
-  insFlight: db.prepare(`INSERT INTO flights (type,flightNo,origin_or_destination,scheduled,estimated,terminal,status,category,updatedLT)
-                         VALUES (@type,@flightNo,@origin_or_destination,@scheduled,@estimated,@terminal,@status,@category,@updatedLT)`),
+  insFlight: db.prepare(`INSERT INTO flights (type,flightNo,origin_or_destination,scheduled,estimated,terminal,status,category)
+                         VALUES (@type,@flightNo,@origin_or_destination,@scheduled,@estimated,@terminal,@status,@category)`),
   listFlights: db.prepare(`SELECT * FROM flights WHERE type=@type AND (@scope='all' OR category=@scope)
                            ORDER BY scheduled, COALESCE(estimated, scheduled)`),
   insLog: db.prepare(`INSERT OR IGNORE INTO call_logs (userId,flightNo,scheduled,estimated,action,type,ts) VALUES (?,?,?,?,?,?,?)`),
@@ -110,13 +110,14 @@ const q = {
   listPSM: db.prepare(`SELECT * FROM psm WHERE type=? AND flightNo=? AND scheduled=? ORDER BY ts DESC`),
   insSub: db.prepare(`INSERT OR IGNORE INTO push_subs (userId,endpoint,p256dh,auth) VALUES (?,?,?,?)`),
   listSubsByUsers: (users) => {
+    if (!users.length) return [];
     const placeholders = users.map(()=>'?').join(',');
     return db.prepare(`SELECT * FROM push_subs WHERE userId IN (${placeholders})`).all(...users);
   },
   pushSeen: db.prepare(`INSERT OR IGNORE INTO push_dedupe (key) VALUES (?)`)
 };
 
-// ---- app ----
+// ---- app
 const app = express();
 app.use(cors({ origin: FRONTEND_ORIGIN === '*' ? true : [FRONTEND_ORIGIN], credentials: true }));
 app.use(express.json({ limit: '512kb' }));
@@ -125,10 +126,14 @@ app.use(session({
   secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  cookie: { httpOnly: true, sameSite: 'lax', secure: false } // set secure: true if behind https
+  cookie: { httpOnly: true, sameSite: 'lax', secure: false } // set secure:true if always HTTPS+proxy
 }));
 
-// ---- scrape loop ----
+// ---- utils
+const maleNow = () => new Date(Date.now() + 5*60*60*1000);
+const HHMM = d => `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+
+// ---- scrape loop
 async function doScrape(){
   const { arr, dep } = await scrapeAll();
   const tx = db.transaction(() => {
@@ -137,126 +142,96 @@ async function doScrape(){
   });
   tx();
 
-  // T-15 push for arrivals to users who saved them
-  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
+  // T-15 push for arrivals
+  if (!HAVE_VAPID) return;
   const now = maleNow();
   const target = new Date(now.getTime() + 15*60000);
-  const targetHHMM = fmtHHMM(target);
+  const t = HHMM(target);
 
-  const rows = db.prepare(`SELECT flightNo, scheduled, estimated FROM flights WHERE type='arr'`).all();
-  const due = rows.filter(f => (f.estimated || f.scheduled) === targetHHMM);
-  if (!due.length) return;
-
+  const rows = db.prepare(`SELECT flightNo, scheduled, COALESCE(estimated, scheduled) AS when FROM flights WHERE type='arr'`).all();
+  const due = rows.filter(f => f.when === t);
   for (const f of due){
     const users = db.prepare(`SELECT DISTINCT userId FROM my_flights WHERE type='arr' AND flightNo=? AND scheduled=?`)
                     .all(f.flightNo, f.scheduled).map(r=>r.userId);
     if (!users.length) continue;
 
     const dedupeKey = `arr|${f.flightNo}|${f.scheduled}|T-15`;
-    try { q.pushSeen.run(dedupeKey); } catch { continue; } // already sent
+    try { q.pushSeen.run(dedupeKey); } catch { continue; }
 
     const subs = q.listSubsByUsers(users);
     await Promise.all(subs.map(s =>
       webpush.sendNotification(
         { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
-        JSON.stringify({
-          title: `Arrival soon: ${f.flightNo}`,
-          body: `ETA ${f.estimated || f.scheduled} (T-15)`,
-          tag: `arr-${f.flightNo}-${f.scheduled}`
-        })
+        JSON.stringify({ title:`Arrival soon: ${f.flightNo}`, body:`ETA ${t} (T-15)`, tag:`arr-${f.flightNo}-${f.scheduled}` })
       ).catch(()=>{})
     ));
   }
 }
 doScrape().catch(()=>{});
-setInterval(() => doScrape().catch(()=>{}), SCRAPE_INTERVAL_MS);
+setInterval(()=>doScrape().catch(()=>{}), SCRAPE_INTERVAL_MS);
 
-// ---- auth helpers ----
-function requireAdmin(req,res,next){
-  if (req.session?.admin) return next();
-  res.status(401).json({ok:false, error:'unauthorized'});
-}
+// ---- routes
+app.get('/', (_,res)=>res.json({ok:true, service:'VADA backend'}));
 
-// ---- routes ----
-app.get('/', (req,res)=>res.json({ok:true, service:'VADA v3'}));
-
-// Flights (query style)
-app.get('/api/flights', (req,res) => {
-  const type = (req.query.type || 'arr').toLowerCase();   // 'arr' | 'dep'
-  const scope = (req.query.scope || 'all').toLowerCase(); // 'all' | 'domestic' | 'international'
-  const rows = q.listFlights.all({ type, scope });
-  res.json(rows);
+app.get('/api/flights', (req,res)=>{
+  const type = (req.query.type || 'arr').toLowerCase();
+  const scope = (req.query.scope || 'all').toLowerCase();
+  res.json(q.listFlights.all({ type, scope }));
 });
 
-// Flights (path style, optional alias)
-app.get('/flights/:type/:scope', (req,res) => {
-  const type = (req.params.type || 'arr').toLowerCase();
-  const scope = (req.params.scope || 'all').toLowerCase();
-  const rows = q.listFlights.all({ type, scope });
-  res.json(rows);
-});
-
-// Call logs (first click kept; later clicks ignored by UNIQUE)
-app.post('/api/call-logs', (req,res) => {
+app.post('/api/call-logs', (req,res)=>{
   const { userId, flightNo, scheduled, estimated, action, type } = req.body || {};
-  if (!userId || !flightNo || !scheduled || !action || !type)
-    return res.status(400).json({ok:false, error:'missing fields'});
+  if (!userId || !flightNo || !scheduled || !action || !type) return res.status(400).json({ok:false, error:'missing'});
   try{
     q.insLog.run(userId, flightNo, scheduled, estimated || null, action, type, new Date().toISOString());
     res.json({ok:true});
-  }catch(e){
-    res.json({ok:true, note:'ignored duplicate'});
-  }
+  }catch{ res.json({ok:true, note:'duplicate ignored'}); }
 });
 
-// Admin session
 app.post('/admin/login', (req,res)=>{
   const { username, password } = req.body || {};
-  if (username === ADMIN_USER && password === ADMIN_PASS) {
-    req.session.admin = true;
-    return res.json({ok:true});
-  }
+  if (username === ADMIN_USER && password === ADMIN_PASS){ req.session.admin = true; return res.json({ok:true}); }
   res.status(401).json({ok:false});
 });
-app.post('/admin/logout', (req,res)=>{ req.session.destroy(()=>res.json({ok:true})); });
-app.get('/api/call-logs', requireAdmin, (req,res) => {
+app.get('/api/call-logs', (req,res)=>{
+  if (!req.session?.admin) return res.status(401).json({ok:false});
   const lim = Math.min(2000, Number(req.query.limit || 500));
   const off = Math.max(0, Number(req.query.offset || 0));
   res.json(q.listLogs.all({ lim, off }));
 });
 
-// My Flights (backend-synced)
+// My Flights
 app.get('/api/my-flights', (req,res)=>{
   const { userId, type='arr' } = req.query;
-  if (!userId) return res.status(400).json({ok:false, error:'userId required'});
+  if (!userId) return res.status(400).json({ok:false});
   res.json(q.listMy.all(userId, type));
 });
 app.post('/api/my-flights', (req,res)=>{
   const { userId, type, flightNo, scheduled } = req.body || {};
-  if (!userId || !type || !flightNo || !scheduled) return res.status(400).json({ok:false, error:'missing fields'});
+  if (!userId || !type || !flightNo || !scheduled) return res.status(400).json({ok:false});
   q.insMy.run(userId, type, flightNo, scheduled);
   res.json({ok:true});
 });
 app.delete('/api/my-flights', (req,res)=>{
   const { userId, type, flightNo, scheduled } = req.body || {};
-  if (!userId || !type || !flightNo || !scheduled) return res.status(400).json({ok:false, error:'missing fields'});
+  if (!userId || !type || !flightNo || !scheduled) return res.status(400).json({ok:false});
   q.delMy.run(userId, type, flightNo, scheduled);
   res.json({ok:true});
 });
 
-// PSM + fan-out to subscribers who saved this flight
+// PSM
 app.get('/api/psm', (req,res)=>{
   const { type='arr', flightNo, scheduled } = req.query;
-  if (!flightNo || !scheduled) return res.status(400).json({ok:false, error:'missing fields'});
+  if (!flightNo || !scheduled) return res.status(400).json({ok:false});
   res.json(q.listPSM.all(type, flightNo, scheduled));
 });
 app.post('/api/psm', async (req,res)=>{
   const { userId, type, flightNo, scheduled, text } = req.body || {};
-  if (!userId || !type || !flightNo || !scheduled || !text) return res.status(400).json({ok:false, error:'missing fields'});
+  if (!userId || !type || !flightNo || !scheduled || !text) return res.status(400).json({ok:false});
   q.insPSM.run(userId, type, flightNo, scheduled, String(text).slice(0,280), new Date().toISOString());
   res.json({ok:true});
 
-  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
+  if (!HAVE_VAPID) return;
   const users = db.prepare(`SELECT DISTINCT userId FROM my_flights WHERE type=? AND flightNo=? AND scheduled=?`)
                   .all(type, flightNo, scheduled).map(r=>r.userId);
   if (!users.length) return;
@@ -264,28 +239,26 @@ app.post('/api/psm', async (req,res)=>{
   await Promise.all(subs.map(s =>
     webpush.sendNotification(
       { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
-      JSON.stringify({ title: `PSM: ${flightNo}`, body: text, tag: `psm-${type}-${flightNo}-${scheduled}` })
+      JSON.stringify({ title:`PSM: ${flightNo}`, body:text, tag:`psm-${type}-${flightNo}-${scheduled}` })
     ).catch(()=>{})
   ));
 });
 
-// Web Push subscription
-app.get('/api/push/vapidPublicKey', (req,res)=>res.json({key: VAPID_PUBLIC_KEY}));
+// Push API
+app.get('/api/push/vapidPublicKey', (_,res)=>res.json({ key: VAPID_PUBLIC_KEY || '' }));
 app.post('/api/push/subscribe', (req,res)=>{
   const { userId, endpoint, keys } = req.body || {};
-  if (!userId || !endpoint || !keys?.p256dh || !keys?.auth) return res.status(400).json({ok:false, error:'invalid subscription'});
+  if (!userId || !endpoint || !keys?.p256dh || !keys?.auth) return res.status(400).json({ok:false});
   q.insSub.run(userId, endpoint, keys.p256dh, keys.auth);
   res.json({ok:true});
 });
 
-// Manual refresh, guarded by token (optional)
+// Manual scrape
 app.post('/refresh', (req,res)=>{
   const token = req.query.token || req.headers['x-admin-token'];
-  if (ADMIN_TOKEN && token === ADMIN_TOKEN){
-    doScrape().then(() => res.json({ok:true})).catch(e => res.status(500).json({ok:false, error:String(e)}));
-  } else {
-    res.status(401).json({ok:false, error:'unauthorized'});
-  }
+  if (ADMIN_TOKEN && token === ADMIN_TOKEN) {
+    doScrape().then(()=>res.json({ok:true})).catch(e=>res.status(500).json({ok:false, error:String(e)}));
+  } else res.status(401).json({ok:false});
 });
 
-app.listen(PORT, ()=>console.log(`VADA v3 backend listening on :${PORT}`));
+app.listen(PORT, ()=>console.log(`VADA backend listening on :${PORT}`));
