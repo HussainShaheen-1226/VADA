@@ -1,95 +1,158 @@
-import { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
-const API = 'https://vada-2db9.onrender.com';
+const API_BASE = 'https://vada-2db9.onrender.com'; // ← change if your backend URL differs
+const POLL_MS = 30_000;
+
+function statusClass(s = '') {
+  const t = (s || '').toUpperCase();
+  if (t.includes('CANCEL')) return 'cancel';
+  if (t.includes('DELAY')) return 'delay';
+  if (t.includes('BOARD'))  return 'board';
+  if (t.includes('LAND'))   return 'ok';
+  return 'info';
+}
+
+function useUserId() {
+  const [userId, setUserId] = useState(null);
+  useEffect(() => {
+    const id = localStorage.getItem('vada_user_id');
+    const ts = parseInt(localStorage.getItem('vada_user_id_set_at') || '0', 10);
+    const maxAge = 14 * 24 * 3600 * 1000;
+    if (id && Date.now() - ts < maxAge) {
+      setUserId(id);
+    } else {
+      let input = window.prompt('Enter your User ID (for SS/BUS logs):') || 'anonymous';
+      input = input.trim();
+      setUserId(input);
+      localStorage.setItem('vada_user_id', input);
+      localStorage.setItem('vada_user_id_set_at', Date.now().toString());
+    }
+  }, []);
+  return userId || 'anonymous';
+}
 
 export default function App() {
+  const [scope, setScope] = useState('all'); // 'all' | 'domestic' | 'international'
   const [flights, setFlights] = useState([]);
-  const [connected, setConnected] = useState(false);
-  const [callTimes, setCallTimes] = useState({}); // { "<flightNo>": { ss: "...", bus: "..." } }
+  const [meta, setMeta] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+  const pollRef = useRef(null);
+  const userId = useUserId();
 
-  // Normalize once (guards against undefined keys)
-  const rows = useMemo(() => (Array.isArray(flights) ? flights : []), [flights]);
+  const lastUpdatedText = useMemo(() => {
+    if (meta.updatedLT) return `Updated: ${meta.updatedLT} LT`;
+    if (meta.scrapedAt) return `Scraped: ${new Date(meta.scrapedAt).toLocaleString()}`;
+    return '—';
+  }, [meta]);
 
-  async function loadFlights() {
+  async function load() {
     try {
-      const res = await fetch(`${API}/flights`, { cache: 'no-store' });
-      setFlights(await res.json());
-    } catch {/* ignore */}
+      setErr('');
+      setLoading(true);
+      const [fRes, mRes] = await Promise.all([
+        fetch(`${API_BASE}/flights?scope=${scope}`, { headers: { 'Cache-Control': 'no-cache' }}),
+        fetch(`${API_BASE}/meta`)
+      ]);
+      if (!fRes.ok) throw new Error(`Flights HTTP ${fRes.status}`);
+      const data = await fRes.json();
+      const m = mRes.ok ? await mRes.json() : {};
+      setFlights(Array.isArray(data) ? data : []);
+      setMeta(m || {});
+    } catch (e) {
+      setErr(e.message);
+      setFlights([]);
+    } finally {
+      setLoading(false);
+    }
   }
 
+  useEffect(() => { load(); }, [scope]);
   useEffect(() => {
-    loadFlights(); // initial
-    const ev = new EventSource(`${API}/events`);
-    ev.onopen = () => setConnected(true);
-    ev.onmessage = async (e) => {
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg.type === 'changed') await loadFlights();
-      } catch {/* ignore */}
-    };
-    ev.onerror = () => setConnected(false);
-    const fallback = setInterval(loadFlights, 60000); // safety
-    return () => { ev.close(); clearInterval(fallback); };
-  }, []);
+    clearInterval(pollRef.current);
+    pollRef.current = setInterval(load, POLL_MS);
+    return () => clearInterval(pollRef.current);
+  }, [scope]);
 
-  function stampCall(flightNo, type) {
-    const stamp = new Date().toLocaleTimeString();
-    setCallTimes(prev => ({
-      ...prev,
-      [flightNo]: { ...(prev[flightNo] || {}), [type]: stamp }
-    }));
+  async function logAction(flightNo, action) {
+    try {
+      await fetch(`${API_BASE}/api/call-logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, flightNo, action })
+      });
+    } catch {
+      // Optional: toast error
+    }
   }
-
-  const ssTel  = 'tel:+9603337100';
-  const busTel = 'tel:+9603337253';
 
   return (
-    <div className="container">
+    <div className="wrap">
       <header className="topbar">
-        <h1>VADA — Velana Arrivals & Departure Assistant</h1>
-        <div className={`live-dot ${connected ? 'on' : 'off'}`}>
-          {connected ? 'live' : 'offline'}
+        <h1>VADA</h1>
+        <div className="right">
+          <span className="muted">{lastUpdatedText}</span>
+          <button className="ghost" onClick={load} title="Refresh now">↻</button>
         </div>
       </header>
 
-      <div className="table-wrap">
-        <table className="vada-table">
-          <thead>
-            <tr>
-              <th>Airline</th>
-              <th>Flight</th>
-              <th>Route</th>
-              <th>STA</th>
-              <th>ETD</th>
-              <th>Status</th>
-              <th>SS</th>
-              <th>BUS</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr><td colSpan={8} className="muted">No flights</td></tr>
-            ) : rows.map((f) => (
-              <tr key={`${f.flightNo}-${f.sta}`}>
-                <td>{f.airline}</td>
-                <td>{f.flightNo}</td>
-                <td>{f.route}</td>
-                <td>{f.sta}</td>
-                <td>{f.etd}</td>
-                <td><span className={`status ${f.status?.toLowerCase() || ''}`}>{f.status}</span></td>
-                <td>
-                  <a className="btn ss" href={ssTel} onClick={() => stampCall(f.flightNo, 'ss')}>SS</a>
-                  <div className="stamp">{callTimes[f.flightNo]?.ss || ''}</div>
-                </td>
-                <td>
-                  <a className="btn bus" href={busTel} onClick={() => stampCall(f.flightNo, 'bus')}>BUS</a>
-                  <div className="stamp">{callTimes[f.flightNo]?.bus || ''}</div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <nav className="scopes">
+        {['all','domestic','international'].map(s => (
+          <button
+            key={s}
+            className={`scope-btn ${scope === s ? 'active' : ''}`}
+            onClick={() => setScope(s)}
+          >
+            {s[0].toUpperCase() + s.slice(1)}
+          </button>
+        ))}
+      </nav>
+
+      <main className="panel">
+        {err && <div className="error">Failed to load: {err}</div>}
+
+        {loading ? (
+          <div className="loading"><div className="spinner" /> Loading flights…</div>
+        ) : flights.length === 0 ? (
+          <div className="empty">No flights at the moment.</div>
+        ) : (
+          <div className="table-wrap">
+            <table className="flights">
+              <thead>
+                <tr>
+                  <th>Flight</th>
+                  <th>Origin</th>
+                  <th>Sched</th>
+                  <th>Est</th>
+                  <th>Term</th>
+                  <th>Status</th>
+                  <th className="actions">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {flights.map((f, i) => (
+                  <tr key={`${f.flightNo}-${f.scheduled}-${i}`}>
+                    <td>{f.flightNo || '—'}</td>
+                    <td>{f.origin_or_destination || '—'}</td>
+                    <td>{f.scheduled || '—'}</td>
+                    <td>{f.estimated || '—'}</td>
+                    <td><span className="pill term">{f.terminal || '—'}</span></td>
+                    <td><span className={`pill status ${statusClass(f.status)}`}>{f.status || '—'}</span></td>
+                    <td className="actions">
+                      <button className="action-btn ss" onClick={() => logAction(f.flightNo, 'SS')}>SS</button>
+                      <button className="action-btn bus" onClick={() => logAction(f.flightNo, 'BUS')}>BUS</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </main>
+
+      <footer className="foot">
+        <small>Source: Velana FIDS · VADA</small>
+      </footer>
     </div>
   );
 }
