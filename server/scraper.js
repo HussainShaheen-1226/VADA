@@ -1,4 +1,4 @@
-// Scrapes Velana FIDS separately for Arrivals and Departures (All/Dom/Int).
+// Scrapes Velana FIDS (arrivals & departures; all/domestic/international)
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 
@@ -22,43 +22,29 @@ const TERM_RX   = /^(DOM|T\d)$/i;
 const FLIGHT_RX = /^([A-Z0-9]{1,3})\s*([0-9]{2,4}[A-Z]?)$/i;
 const TIME_RX   = /\b(\d{1,2}:\d{2})\b/g;
 const STATUS_RX = /(LANDED|DELAYED|FINAL CALL|GATE CLOSED|BOARDING|DEPARTED|CANCELLED|ON TIME|SCHEDULED|ESTIMATED)/i;
-
-const clean = (s) => String(s||'').replace(/\u00a0/g,' ').replace(/[ \t]+/g,' ').trim();
-const extractUpdatedLT = (text) => {
-  const m = text.match(/Updated:\s*([^\n]+?)\s*LT/i);
-  return m ? m[1].trim() : null;
-};
+const clean = s => String(s||'').replace(/\u00a0/g,' ').replace(/[ \t]+/g,' ').trim();
 
 function parseFlightsFromHtml($){
   const flights = [];
-  const bodyText = clean($('body').text());
-  const updatedLT = extractUpdatedLT(bodyText);
-
   $('table').each((_, tbl) => {
-    const $tbl = $(tbl);
-    const sampleCols = $tbl.find('tr').first().find('td,th').length;
-    if (sampleCols < 4) return;
-
-    $tbl.find('tr').each((__, tr) => {
+    $(tbl).find('tr').each((__, tr) => {
       const tds = $(tr).find('td');
       if (tds.length < 4) return;
-
       const cells = tds.map((i, td) => clean($(td).text())).get();
       const rowText = clean(cells.join(' '));
 
-      let flightNo=null, airline=null, number=null, terminal=null;
-      let scheduled=null, estimated=null, status=null, place=null;
-
+      let terminal = null;
       const termIdx = cells.findIndex(c => TERM_RX.test(c));
       if (termIdx !== -1) terminal = cells[termIdx].toUpperCase();
 
       const times = rowText.match(TIME_RX) || [];
-      if (times.length >= 1) scheduled = times[0];
-      if (times.length >= 2) estimated = times[1];
+      const scheduled = times[0] || null;
+      const estimated = times[1] || null;
 
       const sMatch = rowText.match(STATUS_RX);
-      if (sMatch) status = sMatch[1].toUpperCase();
+      const status = sMatch ? sMatch[1].toUpperCase() : null;
 
+      let flightNo=null, airline=null, number=null;
       let flightIdx = cells.findIndex(c => FLIGHT_RX.test(c));
       if (flightIdx === -1) {
         for (let i=0;i<cells.length-1;i++){
@@ -73,6 +59,7 @@ function parseFlightsFromHtml($){
         flightNo = `${airline} ${number}`;
       }
 
+      let place=null;
       if (flightIdx !== -1) {
         let end=cells.length;
         const firstTimeIdx = cells.findIndex(c => TIME_RX.test(c));
@@ -81,25 +68,24 @@ function parseFlightsFromHtml($){
         if (end > flightIdx+1) place = clean(cells.slice(flightIdx+1, end).join(' '));
       }
       if (!place){
-        const candidates = cells.map((c,i)=>({c,i})).filter(({c,i}) =>
-          i!==flightIdx && !TIME_RX.test(c) && !TERM_RX.test(c) && !FLIGHT_RX.test(c) && c.length>1);
-        if (candidates.length) place = candidates.reduce((a,b)=>a.c.length>b.c.length?a:b).c;
+        const candidates = cells.filter(c =>
+          !TIME_RX.test(c) && !TERM_RX.test(c) && !FLIGHT_RX.test(c) && c.length>1);
+        if (candidates.length) place = candidates.sort((a,b)=>b.length-a.length)[0];
       }
 
-      // drop banners/junk rows
-      const originUP = (place||'').toUpperCase();
-      if (originUP.includes('PASSENGER ARRIVALS') || originUP.includes('ALL AIRLINES') || originUP.includes('ALL ORIGINS')) return;
+      // skip banner row
+      const up = (place||'').toUpperCase();
+      if (up.includes('PASSENGER ARRIVALS') || up.includes('ALL AIRLINES') || up.includes('ALL ORIGINS')) return;
 
       if (flightNo && terminal && scheduled) {
         flights.push({
           flightNo,
           origin_or_destination: place || null,
           scheduled,
-          estimated: estimated || null,
+          estimated,
           terminal,
-          status: status || null,
-          category: terminal === 'DOM' ? 'domestic' : 'international',
-          updatedLT
+          status,
+          category: terminal === 'DOM' ? 'domestic' : 'international'
         });
       }
     });
@@ -108,11 +94,7 @@ function parseFlightsFromHtml($){
 }
 
 async function fetchOne(url){
-  const res = await axios.get(url, {
-    timeout: 30000,
-    headers: { 'User-Agent': UA, 'Accept': 'text/html' },
-    validateStatus: () => true
-  });
+  const res = await axios.get(url, { headers: { 'User-Agent': UA }, timeout: 30000, validateStatus: () => true });
   const html = typeof res.data === 'string' ? res.data : '';
   const $ = cheerio.load(html);
   return parseFlightsFromHtml($);
@@ -122,20 +104,15 @@ export async function scrapeType(type){ // 'arr' | 'dep'
   const targets = URLS[type];
   let all = [];
   for (const t of targets){
-    try{
-      const rows = await fetchOne(t.url);
-      all = all.concat(rows);
-    }catch(e){ /* swallow single page errors */ }
+    try{ all = all.concat(await fetchOne(t.url)); }catch{}
   }
-  // de-dupe by flightNo+scheduled+terminal
   const key = f => `${f.flightNo}|${f.scheduled}|${f.terminal}`;
   const map = new Map();
   for (const f of all){ if (!map.has(key(f))) map.set(key(f), f); }
-  return Array.from(map.values());
+  return [...map.values()];
 }
 
 export async function scrapeAll(){
   const [arr, dep] = await Promise.all([scrapeType('arr'), scrapeType('dep')]);
-  // tag the type only when inserting (index.js), keep pure here
   return { arr, dep };
 }
