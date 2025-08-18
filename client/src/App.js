@@ -1,19 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
-const API_BASE = 'https://vada-2db9.onrender.com'; // ← change if your backend URL differs
-const POLL_MS = 30_000;
+const API_BASE = 'https://vada-2db9.onrender.com';   // ← change if your backend URL differs
+const POLL_MS  = 30_000;
 
+// Map status -> CSS class
 function statusClass(s = '') {
   const t = (s || '').toUpperCase();
   if (t.includes('CANCEL')) return 'cancel';
-  if (t.includes('DELAY')) return 'delay';
+  if (t.includes('DELAY'))  return 'delay';
   if (t.includes('BOARD'))  return 'board';
   if (t.includes('LAND'))   return 'ok';
   return 'info';
 }
 
+// 14-day cached User ID
 function useUserId() {
-  const [userId, setUserId] = useState(null);
+  const [userId, setUserId] = useState('anonymous');
   useEffect(() => {
     const id = localStorage.getItem('vada_user_id');
     const ts = parseInt(localStorage.getItem('vada_user_id_set_at') || '0', 10);
@@ -28,7 +30,19 @@ function useUserId() {
       localStorage.setItem('vada_user_id_set_at', Date.now().toString());
     }
   }, []);
-  return userId || 'anonymous';
+  return userId;
+}
+
+// Frontend-only junk row guard (for banner rows like “PASSENGER ARRIVALS …”)
+function isJunkRow(f) {
+  const origin = (f.origin_or_destination || '').toUpperCase();
+  if (!f.flightNo) return true;
+  if (!f.terminal || !f.scheduled) return true;
+  return (
+    origin.includes('PASSENGER ARRIVALS') ||
+    origin.includes('ALL AIRLINES') ||
+    origin.includes('ALL ORIGINS')
+  ) ? true : false;
 }
 
 export default function App() {
@@ -40,24 +54,40 @@ export default function App() {
   const pollRef = useRef(null);
   const userId = useUserId();
 
+  // “Updated …” label
+  const [tick, setTick] = useState(0);
+  useEffect(() => { const t = setInterval(()=>setTick(x=>x+1), 60_000); return ()=>clearInterval(t); }, []);
   const lastUpdatedText = useMemo(() => {
     if (meta.updatedLT) return `Updated: ${meta.updatedLT} LT`;
-    if (meta.scrapedAt) return `Scraped: ${new Date(meta.scrapedAt).toLocaleString()}`;
-    return '—';
-  }, [meta]);
+    if (!meta.scrapedAt) return '—';
+    const mins = Math.floor((Date.now() - new Date(meta.scrapedAt).getTime())/60000);
+    return mins <= 0 ? 'Just now' : `${mins} min ago`;
+  }, [meta, tick]);
 
+  // Fetch flights + meta
   async function load() {
     try {
       setErr('');
       setLoading(true);
+
       const [fRes, mRes] = await Promise.all([
         fetch(`${API_BASE}/flights?scope=${scope}`, { headers: { 'Cache-Control': 'no-cache' }}),
         fetch(`${API_BASE}/meta`)
       ]);
       if (!fRes.ok) throw new Error(`Flights HTTP ${fRes.status}`);
-      const data = await fRes.json();
+
+      const raw = await fRes.json();
       const m = mRes.ok ? await mRes.json() : {};
-      setFlights(Array.isArray(data) ? data : []);
+
+      // 🔹 filter junk rows, then (optional) sort by time
+      const filtered = (Array.isArray(raw) ? raw : []).filter(f => !isJunkRow(f));
+      const sorted = filtered.sort((a,b) => {
+        const ta = (a.estimated || a.scheduled || '').padStart(5,'0');
+        const tb = (b.estimated || b.scheduled || '').padStart(5,'0');
+        return ta.localeCompare(tb);
+      });
+
+      setFlights(sorted);
       setMeta(m || {});
     } catch (e) {
       setErr(e.message);
@@ -81,9 +111,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, flightNo, action })
       });
-    } catch {
-      // Optional: toast error
-    }
+    } catch { /* optional: toast error */ }
   }
 
   return (
