@@ -1,67 +1,91 @@
-/* Background */
-body {
-    margin: 0;
-    font-family: Arial, sans-serif;
-    background-image: url('/background.png');
-    background-size: cover;
-    background-position: center;
-    background-repeat: no-repeat;
-    background-attachment: fixed;
-    color: white;
+/* Background image is bundled from src/assets/background.png */
+body{
+  margin:0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif;
+  color:#fff;
+  background: #000 url('./assets/background.png') center/cover fixed no-repeat; /* ✅ */
 }
 
-/* Container */
-#app {
-    background: rgba(0, 0, 0, 0.5);
-    padding: 20px;
-    min-height: 100vh;
+/* Layout shell */
+.wrap{
+  min-height:100vh;
+  background: linear-gradient(to bottom, rgba(0,0,0,.35), rgba(0,0,0,.7));
+  display:flex;flex-direction:column;
 }
 
-/* Title */
-h1 {
-    text-align: center;
-    margin-bottom: 20px;
+/* Top bar */
+.topbar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 16px;
+}
+.topbar h1{margin:0;font-weight:800;letter-spacing:.6px}
+.topbar .right{display:flex;gap:8px;align-items:center}
+.muted{color:#cfd8dc}
+.ghost{
+  border:1px solid rgba(255,255,255,.25);
+  background:transparent;color:#fff;
+  padding:6px 10px;border-radius:8px;cursor:pointer;
+}
+.ghost:hover{background:rgba(255,255,255,.1)}
+
+/* Scope tabs */
+.scopes{
+  display:flex;gap:8px;padding:0 16px 12px;
+}
+.scope-btn{
+  border:1px solid rgba(255,255,255,.25);
+  background:rgba(0,0,0,.35);
+  color:#fff;padding:8px 12px;border-radius:999px;cursor:pointer;
+}
+.scope-btn.active{background:#ffd400;color:#000;border-color:transparent}
+
+/* Panel */
+.panel{
+  margin:0 auto;width:min(1100px,95vw);
+  background:rgba(0,0,0,.55);
+  border:1px solid rgba(255,255,255,.12);
+  border-radius:14px;box-shadow:0 10px 40px rgba(0,0,0,.35);
+  padding:12px;
 }
 
-/* Flights table */
-table {
-    width: 100%;
-    border-collapse: collapse;
-    margin-top: 20px;
-    background: rgba(255, 255, 255, 0.9);
-    color: black;
-    border-radius: 8px;
-    overflow: hidden;
-}
+.loading{display:flex;gap:12px;align-items:center;justify-content:center;padding:24px;color:#cfd8dc}
+.spinner{width:18px;height:18px;border-radius:50%;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 
-th, td {
-    padding: 12px;
-    border: 1px solid #ddd;
-    text-align: center;
+.error{
+  margin:10px 12px;padding:10px 12px;border-radius:10px;
+  background:#3b1f1f;border:1px solid #ff9aa2;color:#ffd2d6;
 }
+.empty{padding:18px;text-align:center;color:#cfd8dc}
 
-th {
-    background-color: #333;
-    color: white;
+.table-wrap{overflow:auto;max-height:70vh}
+table{width:100%;border-collapse:collapse}
+thead th{
+  position:sticky;top:0;background:rgba(0,0,0,.65);backdrop-filter:blur(3px);z-index:1;
 }
+th,td{padding:10px 8px;border-bottom:1px solid rgba(255,255,255,.12);text-align:left;color:#fff}
+tbody tr:hover{background:rgba(255,255,255,.06)}
+td{color:#f1f5f9}
 
-/* Buttons */
-button {
-    background-color: yellow;
-    color: black;
-    padding: 6px 12px;
-    border: none;
-    cursor: pointer;
-    font-weight: bold;
+/* Pills + buttons */
+.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:.78rem;font-weight:700}
+.pill.term{background:#111827;color:#e5e7eb;border:1px solid rgba(229,231,235,.2)}
+.pill.status{background:#0b3;color:#001}
+.pill.status.delay{background:#f59e0b;color:#000}
+.pill.status.cancel{background:#ef4444;color:#fff}
+.pill.status.board{background:#22d3ee;color:#001}
+.pill.status.info{background:#6b7280;color:#fff}
+
+.actions{width:160px}
+.action-btn{
+  appearance:none;border:0;cursor:pointer;
+  padding:8px 10px;border-radius:8px;font-weight:800;
+  background:#ffd400;color:#000;box-shadow:0 2px 0 rgba(0,0,0,.3);
 }
+.action-btn.bus{background:#ffc400}
+.action-btn:active{transform:translateY(1px)}
 
-button:hover {
-    opacity: 0.8;
-}
-
-/* Loading */
-#loading {
-    text-align: center;
-    font-size: 18px;
-    font-weight: bold;
+@media (max-width:720px){
+  .actions{width:120px}
+  th:nth-child(2),td:nth-child(2){max-width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 }
