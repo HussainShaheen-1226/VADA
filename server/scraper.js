@@ -1,118 +1,129 @@
-// Scrapes Velana FIDS (arrivals & departures; all/domestic/international)
+// server/scraper.js
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 
-const UA = 'Mozilla/5.0 (VADA/3.0)';
-const BASE = 'https://www.fis.com.mv/index.php';
+const UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36';
 
-const URLS = {
-  arr: [
-    {label:'domestic',      url:`${BASE}?webfids_type=arrivals&webfids_lang=1&webfids_domesticinternational=D&webfids_passengercargo=passenger&webfids_airline=ALL&webfids_waypoint=ALL&Submit=+UPDATE+`},
-    {label:'international', url:`${BASE}?webfids_type=arrivals&webfids_lang=1&webfids_domesticinternational=I&webfids_passengercargo=passenger&webfids_airline=ALL&webfids_waypoint=ALL&Submit=+UPDATE+`},
-    {label:'all',           url:`${BASE}?webfids_type=arrivals&webfids_lang=1&webfids_domesticinternational=ALL&webfids_passengercargo=passenger&webfids_airline=ALL&webfids_waypoint=ALL&Submit=+UPDATE+`}
-  ],
-  dep: [
-    {label:'domestic',      url:`${BASE}?webfids_type=departures&webfids_lang=1&webfids_domesticinternational=D&webfids_passengercargo=passenger&webfids_airline=ALL&webfids_waypoint=ALL&Submit=+UPDATE+`},
-    {label:'international', url:`${BASE}?webfids_type=departures&webfids_lang=1&webfids_domesticinternational=I&webfids_passengercargo=passenger&webfids_airline=ALL&webfids_waypoint=ALL&Submit=+UPDATE+`},
-    {label:'all',           url:`${BASE}?webfids_type=departures&webfids_lang=1&webfids_domesticinternational=ALL&webfids_passengercargo=passenger&webfids_airline=ALL&webfids_waypoint=ALL&Submit=+UPDATE+`}
-  ]
+// ---- Canonical FIDS endpoints (from user)
+const FIDS = {
+  arr: {
+    both: 'https://www.fis.com.mv/index.php?webfids_type=arrivals&webfids_lang=1',
+    domestic:
+      'https://www.fis.com.mv/index.php?webfids_type=arrivals&webfids_lang=1&webfids_domesticinternational=D&webfids_passengercargo=passenger&webfids_airline=ALL&webfids_waypoint=ALL&Submit=+UPDATE+',
+    // user pasted D for international too; that’s clearly a typo—use I:
+    international:
+      'https://www.fis.com.mv/index.php?webfids_type=arrivals&webfids_lang=1&webfids_domesticinternational=I&webfids_passengercargo=passenger&webfids_airline=ALL&webfids_waypoint=ALL&Submit=+UPDATE+',
+    // fallback if "both" ever breaks:
+    bothFallback:
+      'https://www.fis.com.mv/index.php?webfids_type=arrivals&webfids_lang=1&webfids_domesticinternational=ALL&webfids_passengercargo=passenger&webfids_airline=ALL&webfids_waypoint=ALL&Submit=+UPDATE+'
+  },
+  dep: {
+    both:
+      'https://www.fis.com.mv/index.php?webfids_type=departures&webfids_lang=1&webfids_domesticinternational=both&webfids_passengercargo=passenger&webfids_airline=ALL&webfids_waypoint=ALL&Submit=+UPDATE+',
+    domestic:
+      'https://www.fis.com.mv/index.php?webfids_type=departures&webfids_lang=1&webfids_domesticinternational=D&webfids_passengercargo=passenger&webfids_airline=ALL&webfids_waypoint=ALL&Submit=+UPDATE+',
+    international:
+      'https://www.fis.com.mv/index.php?webfids_type=departures&webfids_lang=1&webfids_domesticinternational=I&webfids_passengercargo=passenger&webfids_airline=ALL&webfids_waypoint=ALL&Submit=+UPDATE+',
+    // fallback if “both” param stops working:
+    bothFallback:
+      'https://www.fis.com.mv/index.php?webfids_type=departures&webfids_lang=1&webfids_domesticinternational=ALL&webfids_passengercargo=passenger&webfids_airline=ALL&webfids_waypoint=ALL&Submit=+UPDATE+'
+  }
 };
 
-const TERM_RX   = /^(DOM|T\d)$/i;
-const FLIGHT_RX = /^([A-Z0-9]{1,3})\s*([0-9]{2,4}[A-Z]?)$/i;
-const TIME_RX   = /\b(\d{1,2}:\d{2})\b/g;
-const STATUS_RX = /(LANDED|DELAYED|FINAL CALL|GATE CLOSED|BOARDING|DEPARTED|CANCELLED|ON TIME|SCHEDULED|ESTIMATED)/i;
-const clean = s => String(s||'').replace(/\u00a0/g,' ').replace(/[ \t]+/g,' ').trim();
-
-function parseFlightsFromHtml($){
-  const flights = [];
-  $('table').each((_, tbl) => {
-    $(tbl).find('tr').each((__, tr) => {
-      const tds = $(tr).find('td');
-      if (tds.length < 4) return;
-      const cells = tds.map((i, td) => clean($(td).text())).get();
-      const rowText = clean(cells.join(' '));
-
-      let terminal = null;
-      const termIdx = cells.findIndex(c => TERM_RX.test(c));
-      if (termIdx !== -1) terminal = cells[termIdx].toUpperCase();
-
-      const times = rowText.match(TIME_RX) || [];
-      const scheduled = times[0] || null;
-      const estimated = times[1] || null;
-
-      const sMatch = rowText.match(STATUS_RX);
-      const status = sMatch ? sMatch[1].toUpperCase() : null;
-
-      let flightNo=null, airline=null, number=null;
-      let flightIdx = cells.findIndex(c => FLIGHT_RX.test(c));
-      if (flightIdx === -1) {
-        for (let i=0;i<cells.length-1;i++){
-          const combo = clean(`${cells[i]} ${cells[i+1]}`);
-          if (FLIGHT_RX.test(combo)){ flightIdx=i; cells[i]=combo; break; }
-        }
-      }
-      if (flightIdx !== -1) {
-        const m = cells[flightIdx].match(FLIGHT_RX);
-        airline = m[1].toUpperCase();
-        number  = m[2].toUpperCase();
-        flightNo = `${airline} ${number}`;
-      }
-
-      let place=null;
-      if (flightIdx !== -1) {
-        let end=cells.length;
-        const firstTimeIdx = cells.findIndex(c => TIME_RX.test(c));
-        if (firstTimeIdx !== -1) end = Math.min(end, firstTimeIdx);
-        if (termIdx !== -1)     end = Math.min(end, termIdx);
-        if (end > flightIdx+1) place = clean(cells.slice(flightIdx+1, end).join(' '));
-      }
-      if (!place){
-        const candidates = cells.filter(c =>
-          !TIME_RX.test(c) && !TERM_RX.test(c) && !FLIGHT_RX.test(c) && c.length>1);
-        if (candidates.length) place = candidates.sort((a,b)=>b.length-a.length)[0];
-      }
-
-      // skip banner row
-      const up = (place||'').toUpperCase();
-      if (up.includes('PASSENGER ARRIVALS') || up.includes('ALL AIRLINES') || up.includes('ALL ORIGINS')) return;
-
-      if (flightNo && terminal && scheduled) {
-        flights.push({
-          flightNo,
-          origin_or_destination: place || null,
-          scheduled,
-          estimated,
-          terminal,
-          status,
-          category: terminal === 'DOM' ? 'domestic' : 'international'
-        });
-      }
-    });
+async function fetchHTML(url) {
+  const { data, status } = await axios.get(url, {
+    headers: { 'User-Agent': UA, Accept: 'text/html' },
+    timeout: 20000,
+    validateStatus: (s) => s >= 200 && s < 400
   });
+  return { html: data, status };
+}
+
+function parseTable(html, type, category) {
+  const $ = cheerio.load(html);
+
+  // Very general parser: any TR with >=6 TDs; adjust if FIDS layout changes.
+  const rows = $('table tr')
+    .toArray()
+    .map((tr) => $(tr).find('td').toArray().map((td) => $(td).text().trim()))
+    .filter((cells) => cells.length >= 6);
+
+  const flights = [];
+
+  for (const cells of rows) {
+    // Skip headings/marketing blocks that sometimes appear as TRs
+    const joined = cells.join(' ');
+    if (/PASSENGER ARRIVALS|DEPARTURES BOTH|AIRLINES\s|Updated:\s/i.test(joined)) continue;
+
+    // Expected order (Velana pages): [Flight, Origin/Dest, Sched, Est, Term, Status, ...]
+    const [flightNo, place, scheduled, estimated, terminal, status] = cells;
+
+    const normTime = (s) => (s && /^\d{2}:\d{2}$/.test(s) ? s : null);
+
+    flights.push({
+      type, // 'arr' | 'dep'
+      category, // 'domestic' | 'international'
+      flightNo: (flightNo || '').replace(/\s+/g, ' ').trim(),
+      origin_or_destination: (place || '').replace(/\s+/g, ' ').trim(),
+      scheduled: normTime(scheduled),
+      estimated: normTime(estimated),
+      terminal: (terminal || '').toUpperCase().trim(),
+      status: (status || '').toUpperCase().trim()
+    });
+  }
+
   return flights;
 }
 
-async function fetchOne(url){
-  const res = await axios.get(url, { headers: { 'User-Agent': UA }, timeout: 30000, validateStatus: () => true });
-  const html = typeof res.data === 'string' ? res.data : '';
-  const $ = cheerio.load(html);
-  return parseFlightsFromHtml($);
-}
+async function collect(kind) {
+  const urls = FIDS[kind];
 
-export async function scrapeType(type){ // 'arr' | 'dep'
-  const targets = URLS[type];
-  let all = [];
-  for (const t of targets){
-    try{ all = all.concat(await fetchOne(t.url)); }catch{}
+  // Try “both” first (gives full list), fall back to “ALL” if it fails
+  let bothHTML = '';
+  try {
+    const { html } = await fetchHTML(urls.both);
+    bothHTML = html;
+  } catch {
+    try {
+      const { html } = await fetchHTML(urls.bothFallback);
+      bothHTML = html;
+    } catch {
+      // ignore; we’ll use D/I separately
+    }
   }
-  const key = f => `${f.flightNo}|${f.scheduled}|${f.terminal}`;
-  const map = new Map();
-  for (const f of all){ if (!map.has(key(f))) map.set(key(f), f); }
-  return [...map.values()];
+
+  // If both worked, parse once and split by heuristic (DOM vs INT tag is not explicit here)
+  // Safer approach: always fetch D and I explicitly and concatenate.
+  let domestic = [];
+  let international = [];
+
+  // Domestic
+  try {
+    const { html } = await fetchHTML(urls.domestic);
+    domestic = parseTable(html, kind, 'domestic');
+  } catch {
+    // ignore
+  }
+
+  // International
+  try {
+    const { html } = await fetchHTML(urls.international);
+    international = parseTable(html, kind, 'international');
+  } catch {
+    // ignore
+  }
+
+  // If D+I are empty but BOTH succeeded, at least return ALL parsed (marked as unknown category).
+  if (domestic.length === 0 && international.length === 0 && bothHTML) {
+    const all = parseTable(bothHTML, kind, 'domestic'); // mark as domestic by default
+    return all;
+  }
+
+  return [...domestic, ...international];
 }
 
-export async function scrapeAll(){
-  const [arr, dep] = await Promise.all([scrapeType('arr'), scrapeType('dep')]);
+export async function scrapeAll() {
+  const [arr, dep] = await Promise.all([collect('arr'), collect('dep')]);
   return { arr, dep };
 }
