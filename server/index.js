@@ -1,4 +1,4 @@
-// VADA backend (with your VAPID keys + mail inlined as defaults)
+// VADA backend (SQLite sessions + VAPID + logs + PSM + MyFlights)
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
@@ -6,13 +6,14 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import Database from 'better-sqlite3';
 import session from 'express-session';
+import connectSqlite3 from 'connect-sqlite3';
 import webpush from 'web-push';
 import { scrapeAll } from './scraper.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 
-// ---- env / defaults (your values are the fallbacks)
+// ========= ENV / DEFAULTS =========
 const PORT               = Number(process.env.PORT || 10000);
 const FRONTEND_ORIGIN    = process.env.FRONTEND_ORIGIN || '*';
 
@@ -31,7 +32,7 @@ const VAPID_SUBJECT      = process.env.VAPID_SUBJECT
 
 const SESSION_SECRET     = process.env.SESSION_SECRET || 'vada-secret';
 
-// ---- web push
+// ========= WEB PUSH =========
 const HAVE_VAPID = !!(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
 if (HAVE_VAPID) {
   webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
@@ -40,20 +41,20 @@ if (HAVE_VAPID) {
   console.warn('Web Push: disabled (missing VAPID keys)');
 }
 
-// ---- db
+// ========= DB =========
 const db = new Database(path.join(__dirname, 'vada.db'));
 db.pragma('journal_mode = WAL');
 db.exec(`
 CREATE TABLE IF NOT EXISTS flights (
   id INTEGER PRIMARY KEY,
-  type TEXT,
+  type TEXT,                           -- 'arr' | 'dep'
   flightNo TEXT,
   origin_or_destination TEXT,
-  scheduled TEXT,
-  estimated TEXT,
+  scheduled TEXT,                      -- 'HH:MM'
+  estimated TEXT,                      -- 'HH:MM' | NULL
   terminal TEXT,
   status TEXT,
-  category TEXT
+  category TEXT                        -- 'domestic' | 'international'
 );
 CREATE INDEX IF NOT EXISTS idx_flights_type ON flights(type);
 
@@ -63,9 +64,9 @@ CREATE TABLE IF NOT EXISTS call_logs (
   flightNo TEXT,
   scheduled TEXT,
   estimated TEXT,
-  action TEXT,
-  type TEXT,
-  ts TEXT,
+  action TEXT,                         -- 'SS' | 'BUS' | 'FP' | 'LP'
+  type TEXT,                           -- 'arr' | 'dep'
+  ts TEXT,                             -- ISO
   UNIQUE(userId, flightNo, scheduled, action, type)
 );
 
@@ -104,12 +105,20 @@ CREATE TABLE IF NOT EXISTS push_dedupe (
 
 const q = {
   clearType: db.prepare(`DELETE FROM flights WHERE type=?`),
-  insFlight: db.prepare(`INSERT INTO flights (type,flightNo,origin_or_destination,scheduled,estimated,terminal,status,category)
-                         VALUES (@type,@flightNo,@origin_or_destination,@scheduled,@estimated,@terminal,@status,@category)`),
-  listFlights: db.prepare(`SELECT * FROM flights WHERE type=@type AND (@scope='all' OR category=@scope) ORDER BY id`),
+  insFlight: db.prepare(`INSERT INTO flights
+     (type,flightNo,origin_or_destination,scheduled,estimated,terminal,status,category)
+     VALUES (@type,@flightNo,@origin_or_destination,@scheduled,@estimated,@terminal,@status,@category)`),
 
-  insLog: db.prepare(`INSERT OR IGNORE INTO call_logs (userId,flightNo,scheduled,estimated,action,type,ts)
-                      VALUES (?,?,?,?,?,?,?)`),
+  // Keep FIDS ordering (id increments as we insert in scrape order)
+  listFlights: db.prepare(`
+     SELECT * FROM flights
+     WHERE type=@type AND (@scope='all' OR category=@scope)
+     ORDER BY id
+  `),
+
+  // First-click per user/action is enforced by UNIQUE; we also expose per-flight firsts
+  insLog: db.prepare(`INSERT OR IGNORE INTO call_logs
+      (userId,flightNo,scheduled,estimated,action,type,ts) VALUES (?,?,?,?,?,?,?)`),
   listLogs: db.prepare(`SELECT * FROM call_logs ORDER BY ts DESC LIMIT @lim OFFSET @off`),
 
   insMy:  db.prepare(`INSERT OR IGNORE INTO my_flights(userId,type,flightNo,scheduled) VALUES (?,?,?,?)`),
@@ -128,48 +137,77 @@ const q = {
   pushSeen: db.prepare(`INSERT OR IGNORE INTO push_dedupe (key) VALUES (?)`),
 };
 
-// ---- app
+// ========= APP / MIDDLEWARE =========
 const app = express();
-app.use(cors({ origin: FRONTEND_ORIGIN === '*' ? true : [FRONTEND_ORIGIN], credentials: true }));
+const SQLiteStore = connectSqlite3(session);
+
+app.set('trust proxy', 1); // Render behind proxy (so secure cookies work)
+
+app.use(cors({
+  origin: FRONTEND_ORIGIN === '*' ? true : [FRONTEND_ORIGIN],
+  credentials: true
+}));
 app.use(express.json({ limit: '512kb' }));
 app.use(morgan('tiny'));
+
+// SQLite-backed sessions (no MemoryStore warning)
 app.use(session({
+  store: new SQLiteStore({
+    db: 'sessions.sqlite',
+    dir: __dirname,
+    table: 'sessions'
+  }),
   secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  cookie: { httpOnly: true, sameSite: 'lax', secure: false }
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: true // cookies only over HTTPS (Render serves HTTPS)
+  }
 }));
 
-// ---- utils
+// ========= UTILS =========
 const maleNow = () => new Date(Date.now() + 5*60*60*1000);
 const HHMM = d => `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 
-// ---- scrape loop
+// ========= SCRAPE LOOP =========
 async function doScrape() {
-  const { arr, dep } = await scrapeAll();
+  const { arr, dep } = await scrapeAll(); // returns arrays in FIDS order
   const tx = db.transaction(() => {
     q.clearType.run('arr'); arr.forEach(f => q.insFlight.run({ ...f, type:'arr' }));
     q.clearType.run('dep'); dep.forEach(f => q.insFlight.run({ ...f, type:'dep' }));
   });
   tx();
 
+  // T-15 push for arrivals
   if (!HAVE_VAPID) return;
-  const t = HHMM(new Date(maleNow().getTime() + 15*60000));
-  const rows = db.prepare(`SELECT flightNo, scheduled, COALESCE(estimated, scheduled) AS when FROM flights WHERE type='arr'`).all();
-  const due = rows.filter(f => f.when === t);
-  for (const f of due){
-    const users = db.prepare(`SELECT DISTINCT userId FROM my_flights WHERE type='arr' AND flightNo=? AND scheduled=?`)
-      .all(f.flightNo, f.scheduled).map(r=>r.userId);
+  const tMinus15 = HHMM(new Date(maleNow().getTime() + 15*60000));
+  const rows = db.prepare(`
+    SELECT flightNo, scheduled, COALESCE(estimated, scheduled) AS when
+    FROM flights WHERE type='arr'
+  `).all();
+  const due = rows.filter(f => f.when === tMinus15);
+
+  for (const f of due) {
+    const users = db.prepare(`
+      SELECT DISTINCT userId FROM my_flights
+      WHERE type='arr' AND flightNo=? AND scheduled=?
+    `).all(f.flightNo, f.scheduled).map(r => r.userId);
     if (!users.length) continue;
 
     const key = `arr|${f.flightNo}|${f.scheduled}|T-15`;
-    try { q.pushSeen.run(key); } catch { continue; }
+    try { q.pushSeen.run(key); } catch { continue; } // already sent
 
     const subs = q.listSubsByUsers(users);
     await Promise.all(subs.map(s =>
       webpush.sendNotification(
         { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
-        JSON.stringify({ title:`Arrival soon: ${f.flightNo}`, body:`ETA ${t} (T-15)`, tag:`arr-${f.flightNo}-${f.scheduled}` })
+        JSON.stringify({
+          title: `Arrival soon: ${f.flightNo}`,
+          body:  `ETA ${tMinus15} (T-15)`,
+          tag:   `arr-${f.flightNo}-${f.scheduled}`
+        })
       ).catch(()=>{})
     ));
   }
@@ -177,15 +215,17 @@ async function doScrape() {
 doScrape().catch(()=>{});
 setInterval(()=>doScrape().catch(()=>{}), SCRAPE_INTERVAL_MS);
 
-// ---- routes
+// ========= ROUTES =========
 app.get('/', (_,res)=>res.json({ ok:true, service:'VADA backend' }));
 
+// flights (type=arr|dep, scope=all|domestic|international)
 app.get('/api/flights', (req,res)=>{
   const type  = (req.query.type || 'arr').toLowerCase();
   const scope = (req.query.scope || 'all').toLowerCase();
   res.json(q.listFlights.all({ type, scope }));
 });
 
+// first-clicks for one flight (SS/BUS/FP/LP)
 app.get('/api/call-logs/by-flight', (req,res)=>{
   const { type='arr', flightNo, scheduled } = req.query || {};
   if (!flightNo || !scheduled) return res.status(400).json({ ok:false, error:'missing' });
@@ -198,24 +238,33 @@ app.get('/api/call-logs/by-flight', (req,res)=>{
       WHERE type=? AND flightNo=? AND scheduled=?
       GROUP BY action
     ) m ON m.action=c.action AND m.mts=c.ts
-    WHERE c.type=? AND c.flightNo=? AND c.scheduled=?`).all(type, flightNo, scheduled, type, flightNo, scheduled);
+    WHERE c.type=? AND c.flightNo=? AND c.scheduled=?
+  `).all(type, flightNo, scheduled, type, flightNo, scheduled);
 
   const actions = {}; rows.forEach(r => actions[r.action] = { ts:r.ts, userId:r.userId });
   res.json({ ok:true, actions });
 });
 
+// store call (first one per user/action persists; duplicates ignored)
 app.post('/api/call-logs', (req,res)=>{
   const { userId, flightNo, scheduled, estimated, action, type } = req.body || {};
-  if (!userId || !flightNo || !scheduled || !action || !type) return res.status(400).json({ok:false, error:'missing'});
+  if (!userId || !flightNo || !scheduled || !action || !type)
+    return res.status(400).json({ok:false, error:'missing'});
   try{
     q.insLog.run(userId, flightNo, scheduled, estimated || null, action, type, new Date().toISOString());
     res.json({ok:true});
-  }catch{ res.json({ok:true, note:'duplicate ignored'}); }
+  }catch{
+    res.json({ok:true, note:'duplicate ignored'});
+  }
 });
 
+// admin session login + list logs
 app.post('/admin/login', (req,res)=>{
   const { username, password } = req.body || {};
-  if (username === ADMIN_USER && password === ADMIN_PASS){ req.session.admin = true; return res.json({ok:true}); }
+  if (username === ADMIN_USER && password === ADMIN_PASS){
+    req.session.admin = true;
+    return res.json({ok:true});
+  }
   res.status(401).json({ok:false});
 });
 app.get('/api/call-logs', (req,res)=>{
@@ -225,7 +274,7 @@ app.get('/api/call-logs', (req,res)=>{
   res.json(q.listLogs.all({ lim, off }));
 });
 
-// My flights
+// My Flights
 app.get('/api/my-flights', (req,res)=>{
   const { userId, type='arr' } = req.query;
   if (!userId) return res.status(400).json({ok:false});
@@ -244,7 +293,7 @@ app.delete('/api/my-flights', (req,res)=>{
   res.json({ok:true});
 });
 
-// PSM
+// PSM notes + fanout to subscribers of that flight
 app.get('/api/psm', (req,res)=>{
   const { type='arr', flightNo, scheduled } = req.query;
   if (!flightNo || !scheduled) return res.status(400).json({ok:false});
@@ -257,8 +306,9 @@ app.post('/api/psm', async (req,res)=>{
   res.json({ok:true});
 
   if (!HAVE_VAPID) return;
-  const users = db.prepare(`SELECT DISTINCT userId FROM my_flights WHERE type=? AND flightNo=? AND scheduled=?`)
-                  .all(type, flightNo, scheduled).map(r=>r.userId);
+  const users = db.prepare(`
+    SELECT DISTINCT userId FROM my_flights WHERE type=? AND flightNo=? AND scheduled=?
+  `).all(type, flightNo, scheduled).map(r=>r.userId);
   if (!users.length) return;
   const subs = q.listSubsByUsers(users);
   await Promise.all(subs.map(s =>
@@ -278,7 +328,7 @@ app.post('/api/push/subscribe', (req,res)=>{
   res.json({ok:true});
 });
 
-// Manual scrape
+// Manual scrape trigger (token required)
 app.post('/refresh', (req,res)=>{
   const token = req.query.token || req.headers['x-admin-token'];
   if (ADMIN_TOKEN && token === ADMIN_TOKEN) {
@@ -286,4 +336,4 @@ app.post('/refresh', (req,res)=>{
   } else res.status(401).json({ok:false});
 });
 
-app.listen(PORT, ()=>console.log(`VADA backend listening on :${PORT}`));
+app.listen(PORT, ()=>console.log('VADA backend listening on :' + PORT));
