@@ -1,12 +1,10 @@
 const PROD = typeof window !== "undefined" && window.location.hostname.includes("onrender.com");
 export const API_BASE = PROD
-  ? "https://vada-2db9.onrender.com"   // <-- your backend
+  ? "https://vada-2db9.onrender.com"
   : "http://localhost:10000";
 
 export async function getFlights(type = "arr", scope = "all") {
-  // Prefer new API; backend also exposes /flights alias
-  const url = `${API_BASE}/api/flights?type=${type}&scope=${scope}`;
-  const r = await fetch(url);
+  const r = await fetch(`${API_BASE}/api/flights?type=${type}&scope=${scope}`);
   if (!r.ok) throw new Error(`Flights HTTP ${r.status}`);
   return r.json();
 }
@@ -21,6 +19,12 @@ export async function postLog(payload) {
   return r.json();
 }
 
+export async function getFlightLog(type, flightNo, scheduled) {
+  const r = await fetch(`${API_BASE}/api/call-logs/by-flight?type=${type}&flightNo=${encodeURIComponent(flightNo)}&scheduled=${encodeURIComponent(scheduled)}`);
+  if (!r.ok) throw new Error(`log HTTP ${r.status}`);
+  return r.json(); // { ok:true, actions:{SS:{ts,userId}, ...} }
+}
+
 export async function loginAdmin(username, password) {
   const r = await fetch(`${API_BASE}/admin/login`, {
     method: "POST",
@@ -32,9 +36,7 @@ export async function loginAdmin(username, password) {
 }
 
 export async function getLogs(limit = 500, offset = 0) {
-  const r = await fetch(`${API_BASE}/api/call-logs?limit=${limit}&offset=${offset}`, {
-    credentials: "include"
-  });
+  const r = await fetch(`${API_BASE}/api/call-logs?limit=${limit}&offset=${offset}`, { credentials: "include" });
   if (!r.ok) throw new Error("unauthorized");
   return r.json();
 }
@@ -57,7 +59,7 @@ export async function delMyFlight(payload) {
 }
 
 export async function listPSM(type, flightNo, scheduled) {
-  const r = await fetch(`${API_BASE}/api/psm?type=${type}&flightNo=${encodeURIComponent(flightNo)}&scheduled=${scheduled}`);
+  const r = await fetch(`${API_BASE}/api/psm?type=${type}&flightNo=${encodeURIComponent(flightNo)}&scheduled=${encodeURIComponent(scheduled)}`);
   return r.json();
 }
 export async function postPSM(payload) {
