@@ -1,4 +1,3 @@
-// server/index.js
 // VADA backend (push-safe): no crash if VAPID envs missing
 import express from 'express';
 import cors from 'cors';
@@ -18,11 +17,11 @@ const PORT = Number(process.env.PORT || 10000);
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || '*';
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'change-me';
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'M4clD0me5t1cOpsV4DA';
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 const SCRAPE_INTERVAL_MS = Number(process.env.SCRAPE_INTERVAL_MS || 120000);
-const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || 'BN50S2n6D9Z76sv_LsKAkEkoqKBa7lBwWQvTnsQ_1f6oWYn4JgIP0e5j3t9q4X7_OzdHjnm2cxMbzo4vwpp9BJM';
-const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || 'Nuvs2zpvuIfp08yZ0WmHDG3sLTIwHh_9wrjXnKeKy00';
-const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:hussainshaheen1226@gmail.com';
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || '';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:ops@example.com';
 const SESSION_SECRET = process.env.SESSION_SECRET || 'vada-secret';
 
 // ---- web push (guarded)
@@ -43,11 +42,11 @@ CREATE TABLE IF NOT EXISTS flights (
   type TEXT, -- 'arr' | 'dep'
   flightNo TEXT,
   origin_or_destination TEXT,
-  scheduled TEXT, -- HH:MM
-  estimated TEXT, -- HH:MM or null
+  scheduled TEXT,
+  estimated TEXT,
   terminal TEXT,
   status TEXT,
-  category TEXT  -- 'domestic' | 'international'
+  category TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_flights_type ON flights(type);
 
@@ -57,8 +56,8 @@ CREATE TABLE IF NOT EXISTS call_logs (
   flightNo TEXT,
   scheduled TEXT,
   estimated TEXT,
-  action TEXT, -- 'SS' | 'BUS' | 'FP' | 'LP'
-  type TEXT,   -- 'arr' | 'dep'
+  action TEXT,
+  type TEXT,
   ts TEXT,
   UNIQUE(userId, flightNo, scheduled, action, type)
 );
@@ -145,16 +144,11 @@ app.use(session({
   secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  cookie: {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: false // set true if force-https behind proxy and using proper X-Forwarded-Proto
-  }
+  cookie: { httpOnly: true, sameSite: 'lax', secure: false }
 }));
 
 // ---- utils
-// Maldives is UTC+5 (no DST)
-const maleNow = () => new Date(Date.now() + 5 * 60 * 60 * 1000);
+const maleNow = () => new Date(Date.now() + 5 * 60 * 60 * 1000); // UTC+5
 const HHMM = d => `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 
 // ---- scrape loop
@@ -185,17 +179,13 @@ async function doScrape() {
     if (!users.length) continue;
 
     const dedupeKey = `arr|${f.flightNo}|${f.scheduled}|T-15`;
-    try { q.pushSeen.run(dedupeKey); } catch { continue; } // already sent
+    try { q.pushSeen.run(dedupeKey); } catch { continue; }
 
     const subs = q.listSubsByUsers(users);
     await Promise.all(subs.map(s =>
       webpush.sendNotification(
         { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
-        JSON.stringify({
-          title: `Arrival soon: ${f.flightNo}`,
-          body: `ETA ${t} (T-15)`,
-          tag: `arr-${f.flightNo}-${f.scheduled}`
-        })
+        JSON.stringify({ title:`Arrival soon: ${f.flightNo}`, body:`ETA ${t} (T-15)`, tag:`arr-${f.flightNo}-${f.scheduled}` })
       ).catch(() => {})
     ));
   }
@@ -204,111 +194,115 @@ doScrape().catch(() => {});
 setInterval(() => doScrape().catch(() => {}), SCRAPE_INTERVAL_MS);
 
 // ---- routes
-app.get('/', (_, res) => res.json({ ok: true, service: 'VADA backend' }));
+app.get('/', (_,res)=>res.json({ok:true, service:'VADA backend'}));
 
-// flights for UI
-app.get('/api/flights', (req, res) => {
-  const type = (req.query.type || 'arr').toLowerCase();             // 'arr'|'dep'
-  const scope = (req.query.scope || 'all').toLowerCase();           // 'all'|'domestic'|'international'
+// Primary flights API (new)
+app.get('/api/flights', (req,res)=>{
+  const type = (req.query.type || 'arr').toLowerCase();     // 'arr'|'dep'
+  const scope = (req.query.scope || 'all').toLowerCase();   // 'all'|'domestic'|'international'
+  res.json(q.listFlights.all({ type, scope }));
+});
+
+// Legacy alias so old clients hitting /flights don’t 404
+app.get('/flights', (req,res)=>{
+  const type = (req.query.type || 'arr').toLowerCase();
+  const scope = (req.query.scope || 'all').toLowerCase();
   res.json(q.listFlights.all({ type, scope }));
 });
 
 // first-click SS/BUS/FP/LP logs
-app.post('/api/call-logs', (req, res) => {
+app.post('/api/call-logs', (req,res)=>{
   const { userId, flightNo, scheduled, estimated, action, type } = req.body || {};
-  if (!userId || !flightNo || !scheduled || !action || !type) {
-    return res.status(400).json({ ok: false, error: 'missing' });
-  }
-  try {
+  if (!userId || !flightNo || !scheduled || !action || !type)
+    return res.status(400).json({ok:false, error:'missing'});
+  try{
     q.insLog.run(userId, flightNo, scheduled, estimated || null, action, type, new Date().toISOString());
-    res.json({ ok: true });
-  } catch {
-    res.json({ ok: true, note: 'duplicate ignored' });
+    res.json({ok:true});
+  }catch{
+    res.json({ok:true, note:'duplicate ignored'});
   }
 });
 
-// admin session (simple)
-app.post('/admin/login', (req, res) => {
+// admin session
+app.post('/admin/login', (req,res)=>{
   const { username, password } = req.body || {};
-  if (username === ADMIN_USER && password === ADMIN_PASS) {
+  if (username === ADMIN_USER && password === ADMIN_PASS){
     req.session.admin = true;
-    return res.json({ ok: true });
+    return res.json({ok:true});
   }
-  res.status(401).json({ ok: false });
+  res.status(401).json({ok:false});
 });
-app.get('/api/call-logs', (req, res) => {
-  if (!req.session?.admin) return res.status(401).json({ ok: false });
+app.get('/api/call-logs', (req,res)=>{
+  if (!req.session?.admin) return res.status(401).json({ok:false});
   const lim = Math.min(2000, Number(req.query.limit || 500));
   const off = Math.max(0, Number(req.query.offset || 0));
   res.json(q.listLogs.all({ lim, off }));
 });
 
 // My Flights
-app.get('/api/my-flights', (req, res) => {
-  const { userId, type = 'arr' } = req.query;
-  if (!userId) return res.status(400).json({ ok: false });
+app.get('/api/my-flights', (req,res)=>{
+  const { userId, type='arr' } = req.query;
+  if (!userId) return res.status(400).json({ok:false});
   res.json(q.listMy.all(userId, type));
 });
-app.post('/api/my-flights', (req, res) => {
+app.post('/api/my-flights', (req,res)=>{
   const { userId, type, flightNo, scheduled } = req.body || {};
-  if (!userId || !type || !flightNo || !scheduled) return res.status(400).json({ ok: false });
+  if (!userId || !type || !flightNo || !scheduled) return res.status(400).json({ok:false});
   q.insMy.run(userId, type, flightNo, scheduled);
-  res.json({ ok: true });
+  res.json({ok:true});
 });
-app.delete('/api/my-flights', (req, res) => {
+app.delete('/api/my-flights', (req,res)=>{
   const { userId, type, flightNo, scheduled } = req.body || {};
-  if (!userId || !type || !flightNo || !scheduled) return res.status(400).json({ ok: false });
+  if (!userId || !type || !flightNo || !scheduled) return res.status(400).json({ok:false});
   q.delMy.run(userId, type, flightNo, scheduled);
-  res.json({ ok: true });
+  res.json({ok:true});
 });
 
 // PSM notes + fan-out
-app.get('/api/psm', (req, res) => {
-  const { type = 'arr', flightNo, scheduled } = req.query;
-  if (!flightNo || !scheduled) return res.status(400).json({ ok: false });
+app.get('/api/psm', (req,res)=>{
+  const { type='arr', flightNo, scheduled } = req.query;
+  if (!flightNo || !scheduled) return res.status(400).json({ok:false});
   res.json(q.listPSM.all(type, flightNo, scheduled));
 });
-app.post('/api/psm', async (req, res) => {
+app.post('/api/psm', async (req,res)=>{
   const { userId, type, flightNo, scheduled, text } = req.body || {};
-  if (!userId || !type || !flightNo || !scheduled || !text) return res.status(400).json({ ok: false });
-  q.insPSM.run(userId, type, flightNo, scheduled, String(text).slice(0, 280), new Date().toISOString());
-  res.json({ ok: true });
+  if (!userId || !type || !flightNo || !scheduled || !text) return res.status(400).json({ok:false});
+  q.insPSM.run(userId, type, flightNo, scheduled, String(text).slice(0,280), new Date().toISOString());
+  res.json({ok:true});
 
   if (!HAVE_VAPID) return;
   const users = db.prepare(`
     SELECT DISTINCT userId FROM my_flights WHERE type=? AND flightNo=? AND scheduled=?
-  `).all(type, flightNo, scheduled).map(r => r.userId);
+  `).all(type, flightNo, scheduled).map(r=>r.userId);
   if (!users.length) return;
   const subs = q.listSubsByUsers(users);
   await Promise.all(subs.map(s =>
     webpush.sendNotification(
       { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
-      JSON.stringify({
-        title: `PSM: ${flightNo}`,
-        body: text,
-        tag: `psm-${type}-${flightNo}-${scheduled}`
-      })
-    ).catch(() => {})
+      JSON.stringify({ title:`PSM: ${flightNo}`, body:text, tag:`psm-${type}-${flightNo}-${scheduled}` })
+    ).catch(()=>{})
   ));
 });
 
 // Push API
-app.get('/api/push/vapidPublicKey', (_, res) => res.json({ key: VAPID_PUBLIC_KEY || '' }));
-app.post('/api/push/subscribe', (req, res) => {
+app.get('/api/push/vapidPublicKey', (_,res)=>res.json({ key: VAPID_PUBLIC_KEY || '' }));
+app.post('/api/push/subscribe', (req,res)=>{
   const { userId, endpoint, keys } = req.body || {};
-  if (!userId || !endpoint || !keys?.p256dh || !keys?.auth) return res.status(400).json({ ok: false });
+  if (!userId || !endpoint || !keys?.p256dh || !keys?.auth)
+    return res.status(400).json({ok:false});
   q.insSub.run(userId, endpoint, keys.p256dh, keys.auth);
-  res.json({ ok: true });
+  res.json({ok:true});
 });
 
 // Manual scrape (tokened)
-app.post('/refresh', (req, res) => {
+app.post('/refresh', (req,res)=>{
   const token = req.query.token || req.headers['x-admin-token'];
   if (ADMIN_TOKEN && token === ADMIN_TOKEN) {
-    doScrape().then(() => res.json({ ok: true })).catch(e => res.status(500).json({ ok: false, error: String(e) }));
+    doScrape().then(()=>res.json({ok:true}))
+              .catch(e=>res.status(500).json({ok:false, error:String(e)}));
   } else {
-    res.status(401).json({ ok: false });
+    res.status(401).json({ok:false});
   }
 });
 
-app.listen(PORT, () => console.log(`VADA backend listening on :${PORT}`));
+app.listen(PORT, ()=>console.log(`VADA backend listening on :${PORT}`));
