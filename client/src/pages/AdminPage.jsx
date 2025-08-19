@@ -1,53 +1,53 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from "react";
+import { getLogs, loginAdmin } from "../utils/api";
 
-export default function AdminPage({ API_BASE }) {
-  const [logged,setLogged]=useState(false);
-  const [logs,setLogs]=useState([]);
-  const [u,setU]=useState('admin');
-  const [p,setP]=useState('');
+export default function AdminPage() {
+  const [username, setU] = useState("");
+  const [password, setP] = useState("");
+  const [logs, setLogs] = useState([]);
+  const [err, setErr] = useState("");
 
-  async function login(){
-    const res = await fetch(`${API_BASE}/admin/login`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ username:u, password:p })
-    });
-    if (res.ok){ setLogged(true); load(); } else alert('Login failed');
-  }
-  async function load(){
-    const r = await fetch(`${API_BASE}/api/call-logs`);
-    if (r.ok) setLogs(await r.json()); else alert('Unauthorized');
-  }
+  const login = async () => {
+    setErr("");
+    const r = await loginAdmin(username, password);
+    if (!r.ok) { setErr("Login failed"); return; }
+    const L = await getLogs(500, 0);
+    setLogs(L);
+  };
 
   return (
-    <>
-      {!logged ? (
-        <div style={{display:'flex', gap:8, alignItems:'center'}}>
-          <input type="text" placeholder="user" value={u} onChange={e=>setU(e.target.value)} />
-          <input type="password" placeholder="pass" value={p} onChange={e=>setP(e.target.value)} />
-          <button className="scope-btn" onClick={login}>Login</button>
+    <div className="container">
+      <div className="brand">Admin</div>
+
+      <div className="glass" style={{marginTop:12}}>
+        <div style={{display:'flex', gap:8}}>
+          <input placeholder="username" value={username} onChange={e=>setU(e.target.value)} />
+          <input placeholder="password" type="password" value={password} onChange={e=>setP(e.target.value)} />
+          <button className="pill" onClick={login}>Login</button>
         </div>
-      ) : (
-        <div className="table-wrap">
-          <table>
-            <thead><tr>
-              <th>TS</th><th>User</th><th>Type</th><th>Action</th><th>Flight</th><th>Sched</th><th>Est</th>
-            </tr></thead>
-            <tbody>
-              {logs.map((l,i)=>(
-                <tr key={i}>
-                  <td>{new Date(l.ts).toLocaleString()}</td>
-                  <td>{l.userId}</td>
-                  <td>{l.type?.toUpperCase()}</td>
-                  <td>{l.action}</td>
-                  <td>{l.flightNo}</td>
-                  <td>{l.scheduled}</td>
-                  <td>{l.estimated || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </>
+        {err && <div className="error" style={{marginTop:8}}>{err}</div>}
+      </div>
+
+      <div className="glass" style={{marginTop:12}}>
+        <table className="table">
+          <thead>
+            <tr><th>TS</th><th>User</th><th>Type</th><th>Flight</th><th>Sched</th><th>Est</th><th>Action</th></tr>
+          </thead>
+          <tbody>
+            {logs.map((l,i)=>(
+              <tr key={i}>
+                <td>{l.ts}</td>
+                <td>{l.userId}</td>
+                <td>{l.type}</td>
+                <td>{l.flightNo}</td>
+                <td>{l.scheduled}</td>
+                <td>{l.estimated || "-"}</td>
+                <td>{l.action}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
