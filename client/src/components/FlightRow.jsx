@@ -1,74 +1,115 @@
-import React from "react";
-import { postLog, addMyFlight, delMyFlight } from "../utils/api";
+import React, { useEffect, useState } from "react";
+import { addMyFlight, delMyFlight, getFlightLog, postLog } from "../utils/api";
 
-const TEL_SS = "+9603337100";
-const TEL_BUS = "+9603337253";
+const telSS  = "+9603337100";
+const telBUS = "+9603337253";
+const hhmm = ts => ts ? new Date(ts).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : "";
 
-export default function FlightRow({ f, type, userId, mySet, refreshMy, nowLT }) {
-  // hide the marketing/header row that sometimes sneaks in
-  if (/PASSENGER ARRIVALS/i.test(f.origin_or_destination)) return null;
+export default function FlightRow({ f, type, userId, mySet, refreshMy }) {
+  const [firsts, setFirsts] = useState({}); // {SS:{ts,userId}, BUS:{...}, FP:{...}, LP:{...}}
+  const inMy = mySet.has(`${type}|${f.flightNo}|${f.scheduled}`);
 
-  // "tomorrow after 00:00" tag for scheduled time
-  const tomorrow = (() => {
-    // if scheduled < 03:00, treat as next day visually (tweak threshold if needed)
-    const [h, m] = (f.scheduled || "00:00").split(":").map(Number);
-    return h < 3 ? " (tomorrow)" : "";
-  })();
+  useEffect(() => {
+    let alive = true;
+    (async ()=>{
+      try {
+        const r = await getFlightLog(type, f.flightNo, f.scheduled);
+        if (alive && r?.ok) setFirsts(r.actions || {});
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, [type, f.flightNo, f.scheduled]);
 
-  const callAndLog = async (action, tel) => {
+  const doLog = async (action, dial) => {
     try {
       await postLog({
-        userId,
+        userId: userId || "anon",
         flightNo: f.flightNo,
         scheduled: f.scheduled,
-        estimated: f.estimated || null,
-        action, // 'SS'|'BUS'|'FP'|'LP'
+        estimated: f.estimated,
+        action,
         type
       });
-    } catch {}
-    window.location.href = `tel:${tel}`;
+      if (!firsts[action]) {
+        setFirsts(prev => ({ ...prev, [action]: { ts: new Date().toISOString(), userId } }));
+      }
+      if (dial) {
+        window.location.href = `tel:${action === "SS" ? telSS : telBUS}`;
+      }
+    } catch (e) {
+      console.warn("log failed", e);
+    }
   };
 
   const toggleMy = async () => {
-    const key = `${type}|${f.flightNo}|${f.scheduled}`;
-    if (mySet.has(key)) {
-      await delMyFlight({ userId, type, flightNo: f.flightNo, scheduled: f.scheduled });
-    } else {
-      await addMyFlight({ userId, type, flightNo: f.flightNo, scheduled: f.scheduled });
+    try {
+      if (inMy) {
+        await delMyFlight({ userId, type, flightNo: f.flightNo, scheduled: f.scheduled });
+      } else {
+        await addMyFlight({ userId, type, flightNo: f.flightNo, scheduled: f.scheduled });
+      }
+      refreshMy && refreshMy();
+    } catch (e) {
+      console.warn("my-flight toggle failed", e);
     }
-    refreshMy();
   };
 
-  const key = `${type}|${f.flightNo}|${f.scheduled}`;
-  const inMy = mySet.has(key);
-
   return (
-    <tr>
-      <td style={{width:90}}>
-        <div style={{fontWeight:800}}>{f.flightNo}</div>
-        <div className="badge">{(f.category || "").toUpperCase().startsWith("DOM") ? "DOM" : "INT"}</div>
-      </td>
+    <tr className={f.tomorrow ? "is-tomorrow" : ""}>
       <td>
-        <div style={{fontWeight:700}}>{f.origin_or_destination}</div>
-        <div style={{opacity:.7, fontSize:12}}>Term: {f.terminal || "-"}</div>
+        <span className={`badge ${f.category === 'domestic' ? 'dom' : 'int'}`}>
+          {(f.terminal || "").toUpperCase() || (f.category === 'domestic' ? "DOM" : "INT")}
+        </span>
       </td>
-      <td>{f.scheduled}{tomorrow}</td>
+
+      <td>
+        <div className="flightNo">{f.flightNo || "-"}</div>
+        {f.tomorrow && <div className="subtle">(<b>tomorrow</b>)</div>}
+      </td>
+
+      <td>
+        <div>{f.origin_or_destination || "-"}</div>
+        <div className="subtle">Term: {(f.terminal || "-")}</div>
+      </td>
+
+      <td>{f.scheduled || "-"}</td>
       <td>{f.estimated || "-"}</td>
-      <td><span className="badge">{f.status || "-"}</span></td>
+      <td>{f.status || "-"}</td>
+
       <td className="actions">
-        {type === "arr" || type === "dep" ? (
+        <div className="actionRow">
+          <button className="pill yellow" onClick={() => doLog("SS", true)}>SS</button>
+          <span className="mini">
+            {firsts.SS ? `${hhmm(firsts.SS.ts)} · ${firsts.SS.userId || ''}` : ""}
+          </span>
+        </div>
+        <div className="actionRow">
+          <button className="pill yellow" onClick={() => doLog("BUS", true)}>BUS</button>
+          <span className="mini">
+            {firsts.BUS ? `${hhmm(firsts.BUS.ts)} · ${firsts.BUS.userId || ''}` : ""}
+          </span>
+        </div>
+
+        {type === "dep" && (
           <>
-            <button className="btn btn-ss" onClick={() => callAndLog("SS", TEL_SS)}>SS</button>
-            <button className="btn btn-bus" onClick={() => callAndLog("BUS", TEL_BUS)}>BUS</button>
+            <div className="actionRow">
+              <button className="pill" onClick={() => doLog("FP", false)}>FP</button>
+              <span className="mini">
+                {firsts.FP ? `${hhmm(firsts.FP.ts)} · ${firsts.FP.userId || ''}` : ""}
+              </span>
+            </div>
+            <div className="actionRow">
+              <button className="pill" onClick={() => doLog("LP", false)}>LP</button>
+              <span className="mini">
+                {firsts.LP ? `${hhmm(firsts.LP.ts)} · ${firsts.LP.userId || ''}` : ""}
+              </span>
+            </div>
           </>
-        ) : null}
-        {type === "dep" ? (
-          <>
-            <button className="btn btn-fp" onClick={() => postLog({ userId, flightNo: f.flightNo, scheduled: f.scheduled, estimated: f.estimated || null, action:"FP", type })}>FP</button>
-            <button className="btn btn-lp" onClick={() => postLog({ userId, flightNo: f.flightNo, scheduled: f.scheduled, estimated: f.estimated || null, action:"LP", type })}>LP</button>
-          </>
-        ) : null}
-        <button className="btn" onClick={toggleMy}>{inMy ? "− My" : "+ My"}</button>
+        )}
+
+        <div className="actionRow">
+          <button className="pill outline" onClick={toggleMy}>{inMy ? "✓ My" : "+ My"}</button>
+        </div>
       </td>
     </tr>
   );
