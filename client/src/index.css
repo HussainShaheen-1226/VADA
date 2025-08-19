@@ -1,53 +1,100 @@
-html, body, #root { height: 100%; }
-body {
-  margin: 0;
-  color: #eef3f8;
-  background: #08141e;
-  overflow-x: hidden;
+/* Layout container */
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 16px;
 }
+
+/* Background: crisp, non-blurry */
+body {
+  background: #0a1620 url("./assets/background.png") center/cover fixed no-repeat;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* A subtle dark overlay so text stays readable */
 body::before {
   content: "";
   position: fixed;
   inset: 0;
+  background: radial-gradient(1200px 1200px at 20% 10%, rgba(0,0,0,.25), rgba(0,0,0,.55));
+  pointer-events: none;
   z-index: -1;
-  background-image: url("./assets/background.png");
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
-  transform: translateZ(0);
-  filter: saturate(1.05) brightness(0.95);
 }
 
-.container { padding: 16px; }
-.header { display:flex; align-items:center; gap:10px; }
-.brand { font-weight: 900; letter-spacing: 1px; }
-.who { margin-left:auto; opacity:.8; font-size:12px; }
-
-.title { font-size: 28px; margin-top: 6px; font-weight: 800; }
-.subtitle { opacity:.8; margin-bottom: 6px; }
-
-.glass {
-  background: rgba(10, 18, 28, 0.65);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255,255,255,0.07);
+/* Table wrapper enables horizontal scroll on narrow screens */
+.tableWrap {
+  background: rgba(255,255,255,0.06);
   border-radius: 14px;
-  padding: 12px;
+  backdrop-filter: blur(8px);
+  padding: 8px;
+  overflow-x: auto;       /* key: allow horizontal scroll */
 }
 
-.table { width: 100%; border-collapse: collapse; }
-.table th, .table td { padding: 10px 8px; border-bottom: 1px solid rgba(255,255,255,0.06); vertical-align: top; }
-.table th { text-align: left; font-weight: 700; }
+/* Stable table layout */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;    /* key: columns don’t grow with long text */
+  min-width: 760px;       /* so columns have sane width on small phones */
+}
 
-.is-tomorrow { opacity: 0.92; }
+th, td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  text-align: left;
+  white-space: nowrap;    /* keep each cell to one line */
+  overflow: hidden;
+  text-overflow: ellipsis;/* … for long values */
+}
 
-.pill { border: 0; border-radius: 999px; padding: 6px 12px; cursor: pointer; }
-.pill.yellow { background: #ffcc00; color: #111; font-weight: 800; }
-.pill.outline { background: transparent; border: 1px solid rgba(255,255,255,.35); color: #fff; }
+th {
+  font-weight: 700;
+  opacity: .9;
+}
 
-.badge { padding: 3px 8px; border-radius: 8px; font-size: 12px; opacity: .9; }
-.badge.dom { background: rgba(255, 205, 0, .15); border: 1px solid rgba(255,205,0,.35); }
-.badge.int { background: rgba(0, 170, 255, .12); border: 1px solid rgba(0,170,255,.35); }
+.brand {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: .5px;
+}
 
-.subtle { font-size: 12px; opacity: .7; }
-.actions .actionRow { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
-.actions .mini { font-size: 11px; opacity: .75; min-width: 100px; }
+/* Error card */
+.error {
+  background: rgba(255, 80, 80, 0.1);
+  color: #ffd4d4;
+  padding: 12px 14px;
+  border-radius: 10px;
+}
+
+/* Action buttons keep size consistent */
+.btn,
+.btn-yellow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 46px;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 14px;
+  border: none;
+  cursor: pointer;
+}
+
+.btn-yellow { background: #ffcc00; color: #1a1a1a; font-weight: 700; }
+
+/* Small pill labels (DOM/INT/status/term) */
+.pill {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+  font-weight: 600;
+}
+
+/* Header row sticks when scrolling long lists */
+thead th {
+  position: sticky;
+  top: 0;
+  background: rgba(10, 22, 32, 0.85);
+  backdrop-filter: blur(8px);
+}
