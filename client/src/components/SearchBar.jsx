@@ -1,15 +1,12 @@
-import React from 'react';
+import React from "react";
 
-export default function SearchBar({ query, setQuery, onJump }) {
+export default function SearchBar({ value, onChange, placeholder = "Search flight / origin…" }) {
   return (
-    <div className="searchbar">
-      <input
-        type="text"
-        placeholder="Search flight # or origin/destination..."
-        value={query}
-        onChange={(e)=>setQuery(e.target.value)}
-      />
-      <button className="scope-btn" onClick={onJump}>Quick Jump</button>
-    </div>
+    <input
+      style={{ width: "100%", padding: 12, borderRadius: 10, border: "1px solid rgba(255,255,255,.15)", background: "rgba(0,0,0,.3)", color: "#fff" }}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+    />
   );
 }
