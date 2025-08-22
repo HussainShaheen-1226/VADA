@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: vada-frontend
+    env: static
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./client/build
+    # If your React app lives at /client. If it's at repo root, change to ./build
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    # Optional: set cache headers for static assets (good PWA perf)
+    headers:
+      - path: /static/**
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
