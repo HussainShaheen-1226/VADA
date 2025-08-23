@@ -1,15 +1,22 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { getFlights, getMyFlights } from "../utils/api";
+import TopBar from "../components/TopBar";
 import Tabs from "../components/Tabs";
 import SearchBar from "../components/SearchBar";
 import FlightRow from "../components/FlightRow";
 
 const POLL_MS = 30000;
 const toMin = (hhmm="") => {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim());
+  const m = /^(\d{1,2}):(\d{2})$/.exec((hhmm||"").trim());
   if (!m) return null;
   return Number(m[1]) * 60 + Number(m[2]);
 };
+function isValidFlightNo(s="") {
+  if (!s) return false;
+  const bad = /(PASSENGER|FLIGHT|BOTH|DOMESTIC|INTERNATIONAL|CARGO|ALL ORIGINS|AIRLINES)/i;
+  if (bad.test(s)) return false;
+  return /^[A-Z]{1,3}\s?\d{1,4}$/i.test(s.trim());
+}
 
 export default function DeparturesPage({ userId }) {
   const [scope, setScope] = useState("all");
@@ -21,11 +28,7 @@ export default function DeparturesPage({ userId }) {
   const mySet = useMemo(() => new Set(my.map(m => `dep|${m.flightNo}|${m.scheduled}`)), [my]);
   const timerRef = useRef(null);
 
-  const refreshMy = async () => {
-    if (!userId) return;
-    try { setMy(await getMyFlights(userId, "dep")); } catch {}
-  };
-
+  const refreshMy = async () => { if (userId) try { setMy(await getMyFlights(userId, "dep")); } catch {} };
   useEffect(() => { refreshMy(); }, [userId]);
 
   const load = async () => {
@@ -39,12 +42,8 @@ export default function DeparturesPage({ userId }) {
         prev = (m ?? prev);
         return { ...f, tomorrow: rolled };
       });
-      setFlights(enriched);
-      setLastUpdated(new Date());
-    } catch (e) {
-      setErr(String(e.message || e));
-      setFlights([]);
-    }
+      setFlights(enriched); setLastUpdated(new Date());
+    } catch (e) { setErr(String(e.message || e)); setFlights([]); }
   };
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [scope]);
@@ -54,63 +53,46 @@ export default function DeparturesPage({ userId }) {
     return () => timerRef.current && clearInterval(timerRef.current);
   }, [scope]);
 
-  const filtered = flights.filter(f =>
-    (f.flightNo || "").toLowerCase().includes(q.toLowerCase()) ||
-    (f.origin_or_destination || "").toLowerCase().includes(q.toLowerCase())
-  );
+  const filtered = flights
+    .filter(f => isValidFlightNo(f.flightNo))
+    .filter(f =>
+      (f.flightNo || "").toLowerCase().includes(q.toLowerCase()) ||
+      (f.origin_or_destination || "").toLowerCase().includes(q.toLowerCase())
+    );
 
   return (
     <div className="container">
-      <div className="header">
-        <div className="brand">VADA</div>
-        <button className="pill" onClick={load}>↻</button>
-        <div className="who">You: {userId || '—'}</div>
-      </div>
-
-      <div className="title">VADA</div>
-      <div className="subtitle">All departures</div>
+      <TopBar userId={userId} onReload={load} />
+      <div className="title">Departures</div>
+      <div className="subtitle">Live {scope}</div>
 
       <Tabs value={scope} onChange={setScope}
-        items={[ {value:"all",label:"All"}, {value:"domestic",label:"Domestic"}, {value:"international",label:"International"} ]}
-      />
+        items={[{value:"all",label:"All"},{value:"domestic",label:"Domestic"},{value:"international",label:"International"}]} />
 
       <SearchBar value={q} onChange={setQ} />
 
       {err && (
         <div className="error">
           <div>Failed to load: {err}</div>
-          <div>No flights at the moment.</div>
-          <div style={{opacity:.7, marginTop:6}}>Source: Velana FIDS · VADA</div>
+          <div>Source: Velana FIDS · VADA</div>
         </div>
       )}
 
       {!err && (
-        <div className="glass" style={{marginTop:12}}>
-          <div style={{fontSize:12, opacity:.7, marginBottom:6}}>
+        <div className="tableWrap card">
+          <div className="small" style={{marginBottom:6}}>
             Showing {filtered.length} of {flights.length}{lastUpdated ? ` · Updated ${lastUpdated.toLocaleTimeString()}` : ""}
           </div>
           <table className="table">
             <thead>
               <tr>
-                <th>Term</th>
-                <th>Flight</th>
-                <th>Destination</th>
-                <th>Sched</th>
-                <th>Est</th>
-                <th>Status</th>
-                <th>Actions</th>
+                <th>Term</th><th>Flight</th><th>Destination</th><th>Sched</th><th>Est</th><th>Status</th><th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((f, i) => (
-                <FlightRow
-                  key={`${f.flightNo}-${f.scheduled}-${i}`}
-                  f={f}
-                  type="dep"
-                  userId={userId}
-                  mySet={mySet}
-                  refreshMy={refreshMy}
-                />
+                <FlightRow key={`${f.flightNo}-${f.scheduled}-${i}`}
+                  f={f} type="dep" userId={userId} mySet={mySet} refreshMy={refreshMy}/>
               ))}
             </tbody>
           </table>
