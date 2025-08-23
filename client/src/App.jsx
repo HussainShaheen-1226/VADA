@@ -1,44 +1,38 @@
 import React, { useEffect, useState } from "react";
-import { Routes, Route, Link, useLocation, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import ArrivalsPage from "./pages/ArrivalsPage";
 import DeparturesPage from "./pages/DeparturesPage";
 import MyFlightsPage from "./pages/MyFlightsPage";
 import AdminPage from "./pages/AdminPage";
 
-function useUserId() {
-  const k = "vada_user_id";
-  const [id, setId] = useState(localStorage.getItem(k) || "");
-  useEffect(() => {
-    if (!id) {
-      const x = prompt("Enter your user ID for logging (e.g. initials):") || "";
-      localStorage.setItem(k, x);
-      setId(x);
-    }
-  }, [id]);
-  return id;
-}
+const uidKey = "VADA_USER_ID";
+const days14 = 14 * 24 * 60 * 60 * 1000;
 
 export default function App() {
-  const userId = useUserId();
+  const [userId, setUserId] = useState(localStorage.getItem(uidKey) || "");
+  useEffect(() => {
+    const stamp = Number(localStorage.getItem(uidKey + ":ts") || 0);
+    if (!userId || Date.now() - stamp > days14) {
+      const v = prompt("Enter your ID (for logs & My Flights):", userId || "");
+      if (v) {
+        setUserId(v);
+        localStorage.setItem(uidKey, v);
+        localStorage.setItem(uidKey + ":ts", String(Date.now()));
+      }
+    }
+  // eslint-disable-next-line
+  }, []);
+
   const loc = useLocation();
+  useEffect(() => { window.scrollTo(0,0); }, [loc.pathname]);
 
   return (
-    <div>
-      <nav className="container" style={{display:"flex", gap:12, alignItems:"center"}}>
-        <Link className="pill" to="/arr">Arrivals</Link>
-        <Link className="pill" to="/dep">Departures</Link>
-        <Link className="pill" to="/my">My Flights</Link>
-        <Link className="pill" to="/admin">Admin</Link>
-        <div style={{marginLeft:"auto", opacity:.7}}>You: {userId || "—"}</div>
-      </nav>
-
-      <Routes location={loc}>
-        <Route path="/" element={<Navigate to="/arr" replace />} />
-        <Route path="/arr" element={<ArrivalsPage userId={userId} />} />
-        <Route path="/dep" element={<DeparturesPage userId={userId} />} />
-        <Route path="/my" element={<MyFlightsPage userId={userId} />} />
-        <Route path="/admin" element={<AdminPage />} />
-      </Routes>
-    </div>
+    <Routes>
+      <Route path="/" element={<ArrivalsPage userId={userId} />} />
+      <Route path="/departures" element={<DeparturesPage userId={userId} />} />
+      <Route path="/my" element={<MyFlightsPage userId={userId} />} />
+      <Route path="/admin" element={<AdminPage userId={userId} />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }
