@@ -3,12 +3,14 @@ export const API_BASE = PROD
   ? "https://vada-2db9.onrender.com"
   : "http://localhost:10000";
 
+// Flights
 export async function getFlights(type = "arr", scope = "all") {
   const r = await fetch(`${API_BASE}/api/flights?type=${type}&scope=${scope}`);
   if (!r.ok) throw new Error(`Flights HTTP ${r.status}`);
   return r.json();
 }
 
+// Call logs
 export async function postLog(payload) {
   const r = await fetch(`${API_BASE}/api/call-logs`, {
     method: "POST",
@@ -18,13 +20,14 @@ export async function postLog(payload) {
   if (!r.ok) throw new Error("log failed");
   return r.json();
 }
-
 export async function getFlightLog(type, flightNo, scheduled) {
-  const r = await fetch(`${API_BASE}/api/call-logs/by-flight?type=${type}&flightNo=${encodeURIComponent(flightNo)}&scheduled=${encodeURIComponent(scheduled)}`);
+  const u = `${API_BASE}/api/call-logs/by-flight?type=${type}&flightNo=${encodeURIComponent(flightNo)}&scheduled=${encodeURIComponent(scheduled)}`;
+  const r = await fetch(u);
   if (!r.ok) throw new Error(`log HTTP ${r.status}`);
   return r.json(); // { ok:true, actions:{SS:{ts,userId}, ...} }
 }
 
+// Admin
 export async function loginAdmin(username, password) {
   const r = await fetch(`${API_BASE}/admin/login`, {
     method: "POST",
@@ -34,13 +37,13 @@ export async function loginAdmin(username, password) {
   });
   return r.json();
 }
-
-export async function getLogs(limit = 500, offset = 0) {
+export async function getLogs(limit = 1000, offset = 0) {
   const r = await fetch(`${API_BASE}/api/call-logs?limit=${limit}&offset=${offset}`, { credentials: "include" });
   if (!r.ok) throw new Error("unauthorized");
   return r.json();
 }
 
+// My flights
 export async function getMyFlights(userId, type) {
   const r = await fetch(`${API_BASE}/api/my-flights?userId=${encodeURIComponent(userId)}&type=${type}`);
   return r.json();
@@ -58,6 +61,7 @@ export async function delMyFlight(payload) {
   return r.json();
 }
 
+// PSM
 export async function listPSM(type, flightNo, scheduled) {
   const r = await fetch(`${API_BASE}/api/psm?type=${type}&flightNo=${encodeURIComponent(flightNo)}&scheduled=${encodeURIComponent(scheduled)}`);
   return r.json();
