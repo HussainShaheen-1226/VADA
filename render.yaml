@@ -1,0 +1,30 @@
+services:
+  # Frontend (React app)
+  - type: web
+    name: vada-frontend
+    env: static
+    rootDir: client
+    buildCommand: npm install && npm run build
+    staticPublishPath: build
+    envVars:
+      - key: NODE_VERSION
+        value: 22.14.0
+
+  # Backend (Express + Playwright)
+  - type: web
+    name: vada-backend
+    env: node
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node index.js
+    envVars:
+      - key: NODE_VERSION
+        value: 22.14.0
+      - key: ADMIN_TOKEN
+        value: M4clD0me5t1cOpsV4DA
+      - key: VAPID_PUBLIC_KEY
+        value: BN50S2n6D9Z76sv_LsKAkEkoqKBa7lBwWQvTnsQ_1f6oWYn4JgIP0e5j3t9q4X7_OzdHjnm2cxMbzo4vwpp9BJM
+      - key: VAPID_PRIVATE_KEY
+        value: Nuvs2zpvuIfp08yZ0WmHDG3sLTIwHh_9wrjXnKeKy00
+      - key: VAPID_SUBJECT
+        value: mailto:Hussainshaheen1226@gmail.com
