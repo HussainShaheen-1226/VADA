@@ -1,100 +1,93 @@
-/* Layout container */
-.container {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 16px;
+:root {
+  --bg: #0a1620;
+  --fg: #eef3f8;
+  --muted: rgba(255,255,255,.65);
+  --glass: rgba(255,255,255,.06);
+  --line: rgba(255,255,255,.09);
+  --yellow: #ffcc00;
+  --blue: #00aaff;
 }
 
-/* Background: crisp, non-blurry */
+html, body, #root { height: 100%; }
+* { box-sizing: border-box; }
 body {
-  background: #0a1620 url("./assets/background.png") center/cover fixed no-repeat;
+  margin: 0;
+  color: var(--fg);
+  background: var(--bg) url("./assets/background.png") center/cover fixed no-repeat;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* A subtle dark overlay so text stays readable */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  background: radial-gradient(1200px 1200px at 20% 10%, rgba(0,0,0,.25), rgba(0,0,0,.55));
-  pointer-events: none;
-  z-index: -1;
-}
+.container { max-width: 1100px; margin: 0 auto; padding: 16px; }
 
-/* Table wrapper enables horizontal scroll on narrow screens */
-.tableWrap {
-  background: rgba(255,255,255,0.06);
+.topbar { display:flex; gap:10px; align-items:center; margin-bottom: 10px; }
+.brand { font-weight: 900; letter-spacing: .5px; font-size: 20px; }
+.spacer { flex: 1 1 auto; }
+.pill {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg);
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.pill.yellow { border: 0; background: var(--yellow); color: #111; font-weight: 800; }
+.pill.ghost { border-color: rgba(255,255,255,.35); }
+.small { font-size: 12px; opacity: .8; }
+
+.title { font-size: 24px; font-weight: 800; margin: 4px 0 0; }
+.subtitle { opacity:.8; margin-top: 2px; }
+
+.card {
+  background: var(--glass);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--line);
   border-radius: 14px;
-  backdrop-filter: blur(8px);
-  padding: 8px;
-  overflow-x: auto;       /* key: allow horizontal scroll */
+  padding: 10px;
 }
 
-/* Stable table layout */
+.tableWrap { overflow-x: auto; margin-top: 12px; }
 .table {
   width: 100%;
   border-collapse: collapse;
-  table-layout: fixed;    /* key: columns don’t grow with long text */
-  min-width: 760px;       /* so columns have sane width on small phones */
+  table-layout: fixed;
+  min-width: 760px; /* scrolls horizontally on small phones */
 }
-
 th, td {
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(255,255,255,0.08);
-  text-align: left;
-  white-space: nowrap;    /* keep each cell to one line */
+  border-bottom: 1px solid var(--line);
+  padding: 10px 8px;
+  white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;/* … for long values */
+  text-overflow: ellipsis;
+  vertical-align: top;
 }
-
-th {
-  font-weight: 700;
-  opacity: .9;
-}
-
-.brand {
-  font-size: 28px;
-  font-weight: 800;
-  letter-spacing: .5px;
-}
-
-/* Error card */
-.error {
-  background: rgba(255, 80, 80, 0.1);
-  color: #ffd4d4;
-  padding: 12px 14px;
-  border-radius: 10px;
-}
-
-/* Action buttons keep size consistent */
-.btn,
-.btn-yellow {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 46px;
-  height: 36px;
-  padding: 0 10px;
-  border-radius: 14px;
-  border: none;
-  cursor: pointer;
-}
-
-.btn-yellow { background: #ffcc00; color: #1a1a1a; font-weight: 700; }
-
-/* Small pill labels (DOM/INT/status/term) */
-.pill {
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: rgba(255,255,255,0.08);
-  font-weight: 600;
-}
-
-/* Header row sticks when scrolling long lists */
 thead th {
   position: sticky;
   top: 0;
-  background: rgba(10, 22, 32, 0.85);
-  backdrop-filter: blur(8px);
+  background: rgba(10,22,32,.93);
+  z-index: 1;
+}
+
+.badge { padding: 3px 8px; border-radius: 8px; font-size: 12px; opacity:.95; }
+.badge.dom { background: rgba(255,205,0,.15); border: 1px solid rgba(255,205,0,.35); }
+.badge.int { background: rgba(0,170,255,.12); border: 1px solid rgba(0,170,255,.35); }
+
+.subtle { font-size: 12px; opacity: .75; }
+
+.actions .row { display:flex; align-items:center; gap:8px; margin: 4px 0; }
+.actions .mini { font-size:11px; opacity:.85; min-width: 110px; text-align:left; }
+
+.error {
+  background: rgba(255,80,80,.12);
+  border: 1px solid rgba(255,80,80,.35);
+  border-radius: 12px;
+  padding: 10px;
+  margin-top: 10px;
+  color: #ffd7d7;
+}
+
+input[type="text"], input[type="password"] {
+  width: 100%; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid rgba(255,255,255,.25);
+  background: rgba(0,0,0,.18); color: #fff; outline: none;
 }
