@@ -1,6 +1,14 @@
 <!doctype html>
 <html lang="en">
 <head>
+  <script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistrations()
+      .then(rs => rs.forEach(r => r.unregister().catch(()=>{})));
+    // also clear outdated caches created by the old SW
+    caches && caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
+  }
+</script>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
   <title>VADA</title>
