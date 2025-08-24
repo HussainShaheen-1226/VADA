@@ -91,3 +91,22 @@ input[type="text"], input[type="password"] {
   border: 1px solid rgba(255,255,255,.25);
   background: rgba(0,0,0,.18); color: #fff; outline: none;
 }
+
+/* Table cell alignment */
+.table th, .table td {
+  vertical-align: top;
+}
+
+/* Action buttons spacing */
+.actions .pill {
+  margin-right: 6px;
+}
+
+/* PSM input + button layout */
+.psmPane {
+  display: flex;
+  gap: 8px;
+}
+.psmPane input {
+  flex: 1;
+}
