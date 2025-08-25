@@ -1,74 +1,63 @@
 const PROD = typeof window !== "undefined" && window.location.hostname.includes("onrender.com");
+
+// ⬇️ Set your backend URL here
 export const API_BASE = PROD
   ? "https://vada-2db9.onrender.com"
   : "http://localhost:10000";
 
-// Flights
-export async function getFlights(type = "arr", scope = "all") {
-  const r = await fetch(`${API_BASE}/api/flights?type=${type}&scope=${scope}`);
-  if (!r.ok) throw new Error(`Flights HTTP ${r.status}`);
+async function j(r) {
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
 
-// Call logs
-export async function postLog(payload) {
-  const r = await fetch(`${API_BASE}/api/call-logs`, {
-    method: "POST",
+// auth
+export const me = () => fetch(`${API_BASE}/auth/me`, { credentials: "include" }).then(j);
+export const login = (username, password) =>
+  fetch(`${API_BASE}/auth/login`, {
+    method: "POST", credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password })
+  }).then(j);
+export const logout = () => fetch(`${API_BASE}/auth/logout`, { method: "POST", credentials: "include" }).then(j);
+
+// flights
+export const getFlights = (type="arr", scope="all", includeFirst=false) =>
+  fetch(`${API_BASE}/api/flights?type=${type}&scope=${scope}&includeFirst=${includeFirst?1:0}`, { credentials: "include" }).then(j);
+
+// actions (ss/bus/fp/lp)
+export const postAction = (payload) =>
+  fetch(`${API_BASE}/api/actions`, {
+    method: "POST", credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
-  });
-  if (!r.ok) throw new Error("log failed");
-  return r.json();
-}
-export async function getFlightLog(type, flightNo, scheduled) {
-  const u = `${API_BASE}/api/call-logs/by-flight?type=${type}&flightNo=${encodeURIComponent(flightNo)}&scheduled=${encodeURIComponent(scheduled)}`;
-  const r = await fetch(u);
-  if (!r.ok) throw new Error(`log HTTP ${r.status}`);
-  return r.json(); // { ok:true, actions:{SS:{ts,userId}, ...} }
-}
+  }).then(j);
 
-// Admin
-export async function loginAdmin(username, password) {
-  const r = await fetch(`${API_BASE}/admin/login`, {
-    method: "POST",
+// my flights
+export const listMy = (type="arr") =>
+  fetch(`${API_BASE}/api/my-flights?type=${type}`, { credentials: "include" }).then(j);
+export const addMy = (payload) =>
+  fetch(`${API_BASE}/api/my-flights`, {
+    method: "POST", credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
-    credentials: "include"
-  });
-  return r.json();
-}
-export async function getLogs(limit = 1000, offset = 0) {
-  const r = await fetch(`${API_BASE}/api/call-logs?limit=${limit}&offset=${offset}`, { credentials: "include" });
-  if (!r.ok) throw new Error("unauthorized");
-  return r.json();
-}
+    body: JSON.stringify(payload)
+  }).then(j);
+export const delMy = (payload) =>
+  fetch(`${API_BASE}/api/my-flights`, {
+    method: "DELETE", credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  }).then(j);
 
-// My flights
-export async function getMyFlights(userId, type) {
-  const r = await fetch(`${API_BASE}/api/my-flights?userId=${encodeURIComponent(userId)}&type=${type}`);
-  return r.json();
-}
-export async function addMyFlight(payload) {
-  const r = await fetch(`${API_BASE}/api/my-flights`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
-  });
-  return r.json();
-}
-export async function delMyFlight(payload) {
-  const r = await fetch(`${API_BASE}/api/my-flights`, {
-    method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
-  });
-  return r.json();
-}
+// psm
+export const listPSM = (type, flightNo, scheduled) =>
+  fetch(`${API_BASE}/api/psm?type=${type}&flightNo=${encodeURIComponent(flightNo)}&scheduled=${scheduled}`, { credentials: "include" }).then(j);
+export const postPSM = (payload) =>
+  fetch(`${API_BASE}/api/psm`, {
+    method: "POST", credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  }).then(j);
 
-// PSM
-export async function listPSM(type, flightNo, scheduled) {
-  const r = await fetch(`${API_BASE}/api/psm?type=${type}&flightNo=${encodeURIComponent(flightNo)}&scheduled=${encodeURIComponent(scheduled)}`);
-  return r.json();
-}
-export async function postPSM(payload) {
-  const r = await fetch(`${API_BASE}/api/psm`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
-  });
-  return r.json();
-}
+// admin (optional use later)
+export const listActionsAdmin = (type, flightNo, scheduled) =>
+  fetch(`${API_BASE}/api/actions?type=${type}&flightNo=${encodeURIComponent(flightNo)}&scheduled=${scheduled}`, { credentials: "include" }).then(j);
