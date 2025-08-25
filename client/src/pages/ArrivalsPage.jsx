@@ -1,109 +1,55 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { getFlights, getMyFlights } from "../utils/api";
+import { getFlights } from "../utils/api";
 import Tabs from "../components/Tabs";
 import SearchBar from "../components/SearchBar";
-import FlightRow from "../components/FlightRow";
+import FlightTable from "../components/FlightTable";
 
 export default function ArrivalsPage({ userId }) {
-  const [scope, setScope] = useState("all"); // all | domestic | international
+  const [scope, setScope] = useState("all");
   const [flights, setFlights] = useState([]);
-  const [err, setErr] = useState("");
   const [q, setQ] = useState("");
-  const [my, setMy] = useState([]);
-
-  const mySet = useMemo(
-    () => new Set(my.map((m) => `arr|${m.flightNo}|${m.scheduled}`)),
-    [my]
-  );
-
-  const refreshMy = async () => {
-    const r = await getMyFlights(userId, "arr");
-    setMy(r || []);
-  };
-
-  useEffect(() => {
-    refreshMy();
-    // eslint-disable-next-line
-  }, [userId]);
+  const [err, setErr] = useState("");
 
   const load = async () => {
     setErr("");
     try {
-      const data = await getFlights("arr", scope);
-      setFlights(Array.isArray(data) ? data : []);
+      const data = await getFlights("arr", scope, true);
+      setFlights(data);
     } catch (e) {
       setErr(String(e.message || e));
       setFlights([]);
     }
   };
 
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [scope]);
   useEffect(() => {
-    load();
-    // eslint-disable-next-line
-  }, [scope]);
+    const id = setInterval(load, 60000);
+    return () => clearInterval(id);
+  }, []); // refresh loop
 
-  const filtered = flights.filter((f) => {
-    const hay =
-      `${f.flightNo} ${f.origin_or_destination} ${f.terminal} ${f.status}`.toLowerCase();
-    return hay.includes(q.toLowerCase());
-  });
+  const filtered = useMemo(() => {
+    const qq = q.toLowerCase();
+    return flights.filter(f =>
+      (f.flightNo || "").toLowerCase().includes(qq) ||
+      (f.origin_or_destination || "").toLowerCase().includes(qq)
+    );
+  }, [flights, q]);
 
   return (
     <div className="container">
       <div className="header">
-        <div className="brand">VADA</div>
-        <button className="pill" onClick={load}>↻</button>
+        <div className="brand">VADA · Arrivals</div>
+        <button className="pill" onClick={load}>↻ Refresh</button>
       </div>
 
-      <h2>Arrivals</h2>
-
-      <Tabs
-        value={scope}
-        onChange={setScope}
-        items={[
-          { value: "all", label: "All" },
-          { value: "domestic", label: "Domestic" },
-          { value: "international", label: "International" },
-        ]}
+      <Tabs value={scope} onChange={setScope}
+        items={[{value:"all",label:"All"},{value:"domestic",label:"Domestic"},{value:"international",label:"International"}]}
       />
-
       <SearchBar value={q} onChange={setQ} />
 
-      {err ? (
-        <div className="error" style={{ marginTop: 12 }}>
-          <div>Failed to load: {err}</div>
-          <div style={{ opacity: 0.7, marginTop: 6 }}>Source: Velana FIDS · VADA</div>
-        </div>
-      ) : null}
+      {err ? <div className="error" style={{marginTop:12}}>Failed to load · {err}</div> : null}
 
-      <div className="glass" style={{ marginTop: 12 }}>
-        <div className="tableMeta">
-          Showing {filtered.length} of {flights.length} · Updated {new Date().toLocaleTimeString()}
-        </div>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Flight info</th>
-              <th>Sched</th>
-              <th>Est</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((f, i) => (
-              <FlightRow
-                key={`${f.flightNo}-${f.scheduled}-${i}`}
-                f={f}
-                type="arr"
-                userId={userId}
-                mySet={mySet}
-                refreshMy={refreshMy}
-              />
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <FlightTable flights={filtered} type="arr" userId={userId} refresh={load}/>
     </div>
   );
 }
