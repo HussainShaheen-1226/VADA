@@ -1,23 +1,13 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <script>
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.getRegistrations()
-      .then(rs => rs.forEach(r => r.unregister().catch(()=>{})));
-    // also clear outdated caches created by the old SW
-    caches && caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
-      <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
-      <meta http-equiv="Pragma" content="no-cache">
-      <meta http-equiv="Expires" content="0">
-  }
-</script>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
   <title>VADA</title>
   <link rel="manifest" href="/manifest.webmanifest"/>
   <link rel="icon" href="/icons/icon-192.png"/>
   <meta name="theme-color" content="#0a1620"/>
+  <style>html,body,#root{height:100%}</style>
 </head>
 <body>
   <noscript>VADA needs JavaScript enabled.</noscript>
