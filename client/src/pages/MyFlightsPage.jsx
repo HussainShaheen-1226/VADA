@@ -1,56 +1,52 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { getMyFlights } from "../utils/api";
-import TopBar from "../components/TopBar";
-import FlightRow from "../components/FlightRow";
+import { getFlights, listMy } from "../utils/api";
+import SearchBar from "../components/SearchBar";
+import FlightTable from "../components/FlightTable";
 
 export default function MyFlightsPage({ userId }) {
-  const [arr, setArr] = useState([]);
-  const [dep, setDep] = useState([]);
+  const [type, setType] = useState("arr"); // arr | dep
+  const [scope, setScope] = useState("all");
+  const [flights, setFlights] = useState([]);
+  const [mine, setMine] = useState([]);
+  const [q, setQ] = useState("");
 
-  const mySet = useMemo(() => new Set([
-    ...arr.map(m => `arr|${m.flightNo}|${m.scheduled}`),
-    ...dep.map(m => `dep|${m.flightNo}|${m.scheduled}`)
-  ]), [arr, dep]);
+  async function load() {
+    const [fl, my] = await Promise.all([getFlights(type, scope, true), listMy(type)]);
+    setFlights(fl);
+    setMine(my);
+  }
 
-  const refresh = async () => {
-    if (!userId) return;
-    try {
-      const [a, d] = await Promise.all([
-        getMyFlights(userId, "arr"),
-        getMyFlights(userId, "dep")
-      ]);
-      setArr(a || []); setDep(d || []);
-    } catch {}
-  };
-  useEffect(() => { refresh(); }, [userId]);
+  useEffect(()=>{ load(); /* eslint-disable-next-line */ }, [type, scope]);
+
+  const setFilteredToMine = useMemo(() => {
+    const setKey = new Set(mine.map(m => `${m.flightNo}|${m.scheduled}`));
+    return flights.filter(f => setKey.has(`${f.flightNo}|${f.scheduled}`));
+  }, [mine, flights]);
+
+  const filtered = useMemo(() => {
+    const qq = q.toLowerCase();
+    return setFilteredToMine.filter(f =>
+      (f.flightNo || "").toLowerCase().includes(qq) ||
+      (f.origin_or_destination || "").toLowerCase().includes(qq)
+    );
+  }, [setFilteredToMine, q]);
 
   return (
     <div className="container">
-      <TopBar userId={userId} onReload={refresh} />
-      <div className="title">My Flights</div>
-      <div className="subtitle">Arrivals & Departures you added</div>
-
-      <div className="tableWrap card">
-        <div className="small">Arrivals ({arr.length})</div>
-        <table className="table"><thead>
-          <tr><th>Term</th><th>Flight</th><th>Origin</th><th>Sched</th><th>Est</th><th>Status</th><th>Actions</th></tr>
-        </thead><tbody>
-          {(arr||[]).map((f,i)=>(
-            <FlightRow key={`A-${f.flightNo}-${f.scheduled}-${i}`} f={f} type="arr" userId={userId} mySet={mySet} refreshMy={refresh}/>
-          ))}
-        </tbody></table>
+      <div className="header">
+        <div className="brand">VADA · My Flights</div>
+        <div className="nav">
+          <button className={`pill ${type==='arr'?'active':''}`} onClick={()=>setType('arr')}>Arrivals</button>
+          <button className={`pill ${type==='dep'?'active':''}`} onClick={()=>setType('dep')}>Departures</button>
+          <button className={`pill ${scope==='all'?'active':''}`} onClick={()=>setScope('all')}>All</button>
+          <button className={`pill ${scope==='domestic'?'active':''}`} onClick={()=>setScope('domestic')}>Domestic</button>
+          <button className={`pill ${scope==='international'?'active':''}`} onClick={()=>setScope('international')}>International</button>
+        </div>
+        <button className="pill" onClick={load}>↻</button>
       </div>
 
-      <div className="tableWrap card" style={{marginTop:12}}>
-        <div className="small">Departures ({dep.length})</div>
-        <table className="table"><thead>
-          <tr><th>Term</th><th>Flight</th><th>Destination</th><th>Sched</th><th>Est</th><th>Status</th><th>Actions</th></tr>
-        </thead><tbody>
-          {(dep||[]).map((f,i)=>(
-            <FlightRow key={`D-${f.flightNo}-${f.scheduled}-${i}`} f={f} type="dep" userId={userId} mySet={mySet} refreshMy={refresh}/>
-          ))}
-        </tbody></table>
-      </div>
+      <SearchBar value={q} onChange={setQ} />
+      <FlightTable flights={filtered} type={type} userId={userId} refresh={load}/>
     </div>
   );
 }
