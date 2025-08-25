@@ -1,4 +1,4 @@
-// VADA backend — SQLite only, XML source
+// VADA backend — SQLite only, XML source, secure env-based
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -33,11 +33,14 @@ const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:ops@example.com';
 const SESSION_SECRET = process.env.SESSION_SECRET || 'vada-secret';
 
 // ---------- time helpers ----------
-const maleNow = () => new Date(Date.now() + MALE_TZ_OFFSET_MIN * 60000 - (new Date().getTimezoneOffset() * 60000));
-const HHMM = d => `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+const maleNow = () =>
+  new Date(Date.now() + MALE_TZ_OFFSET_MIN * 60000 - new Date().getTimezoneOffset() * 60000);
+const HHMM = (d) =>
+  `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 
 function isTomorrowByRollover(hhmm) {
   // Treat a flight as tomorrow if its SCHED < ROLLOVER_HOUR AND current local hour >= ROLLOVER_HOUR
+  if (!/^\d{2}:\d{2}$/.test(hhmm || '')) return false;
   const [h, m] = hhmm.split(':').map(Number);
   const now = maleNow();
   const nowH = now.getHours();
@@ -60,7 +63,7 @@ CREATE TABLE IF NOT EXISTS flights (
   estimated TEXT,                                   -- 'HH:MM' or NULL
   terminal TEXT,
   status TEXT,
-  category TEXT,                                    -- 'domestic' | 'international'
+  category TEXT,                                    -- 'domestic' | 'international' | 'all'
   dayTag TEXT                                       -- 'today' | 'tomorrow'
 );
 CREATE INDEX IF NOT EXISTS idx_flights_main ON flights(type, category, scheduled, flightNo);
@@ -119,16 +122,19 @@ CREATE TABLE IF NOT EXISTS push_dedupe (            -- avoid duplicate push
 
 const tx = db.transaction.bind(db);
 
-// prepared
+// prepared statements
 const st = {
+  // flights
   clearType: db.prepare(`DELETE FROM flights WHERE type=?`),
-  insFlight: db.prepare(`INSERT INTO flights
-    (type, flightNo, origin_or_destination, scheduled, estimated, terminal, status, category, dayTag)
-    VALUES (@type,@flightNo,@origin_or_destination,@scheduled,@estimated,@terminal,@status,@category,@dayTag)`),
+  insFlight: db.prepare(`
+    INSERT INTO flights
+      (type, flightNo, origin_or_destination, scheduled, estimated, terminal, status, category, dayTag)
+    VALUES
+      (@type,@flightNo,@origin_or_destination,@scheduled,@estimated,@terminal,@status,@category,@dayTag)
+  `),
   listFlights: db.prepare(`
     SELECT * FROM flights
-    WHERE type=@type
-      AND (@scope='all' OR category=@scope)
+    WHERE type=@type AND (@scope='all' OR category=@scope)
     ORDER BY dayTag='tomorrow', time(scheduled), COALESCE(time(estimated), time(scheduled)), flightNo
   `),
 
@@ -148,10 +154,15 @@ const st = {
     ORDER BY ts ASC
   `),
 
-  // my flights
+  // my flights (FIXED: no dayTag() call)
   addMy: db.prepare(`INSERT OR IGNORE INTO my_flights(userId,type,flightNo,scheduled) VALUES (?,?,?,?)`),
   delMy: db.prepare(`DELETE FROM my_flights WHERE userId=? AND type=? AND flightNo=? AND scheduled=?`),
-  listMy: db.prepare(`SELECT * FROM my_flights WHERE userId=? AND type=? ORDER BY dayTag(flightNo) ASC`),
+  listMy: db.prepare(`
+    SELECT userId, type, flightNo, scheduled
+    FROM my_flights
+    WHERE userId=? AND type=?
+    ORDER BY time(scheduled), flightNo
+  `),
 
   // psm
   addPSM: db.prepare(`INSERT INTO psm(userId,type,flightNo,scheduled,text,ts) VALUES(?,?,?,?,?,?)`),
@@ -169,11 +180,13 @@ const st = {
   addSub: db.prepare(`INSERT OR IGNORE INTO push_subs(userId,endpoint,p256dh,auth) VALUES (?,?,?,?)`),
   subsForUsers: (ids) => {
     if (!ids.length) return [];
-    const q = `SELECT * FROM push_subs WHERE userId IN (${ids.map(()=>'?').join(',')})`;
+    const q = `SELECT * FROM push_subs WHERE userId IN (${ids.map(() => '?').join(',')})`;
     return db.prepare(q).all(...ids);
   },
   dedupe: db.prepare(`INSERT OR IGNORE INTO push_dedupe(key) VALUES (?)`),
-  myUsersForFlight: db.prepare(`SELECT DISTINCT userId FROM my_flights WHERE type=? AND flightNo=? AND scheduled=?`)
+  myUsersForFlight: db.prepare(`
+    SELECT DISTINCT userId FROM my_flights WHERE type=? AND flightNo=? AND scheduled=?
+  `)
 };
 
 // bootstrap admin user if missing
@@ -200,18 +213,12 @@ async function refreshFromXML() {
   const { arr, dep } = await fetchFromXML();
 
   const tagFlights = (items, type) =>
-    items.map(f => ({
+    items.map((f) => ({
       ...f,
       type,
       estimated: f.estimated?.trim() ? f.estimated.trim() : null,
-      dayTag: isTomorrowByRolloVER_HOUR_SAFE(f.scheduled) ? 'tomorrow' : 'today'
+      dayTag: isTomorrowByRollover(f.scheduled) ? 'tomorrow' : 'today'
     }));
-
-  // safer wrapper to guard bad inputs
-  function isTomorrowByRolloVER_HOUR_SAFE(hhmm) {
-    if (!/^\d{2}:\d{2}$/.test(hhmm || '')) return false;
-    return isTomorrowByRollover(hhmm);
-  }
 
   const arrTagged = tagFlights(arr, 'arr');
   const depTagged = tagFlights(dep, 'dep');
@@ -226,206 +233,208 @@ async function refreshFromXML() {
 }
 
 async function refreshLoop() {
-  try { await refreshFromXML(); } catch (e) { console.error('refreshFromXML failed:', e.message || e); }
+  try {
+    await refreshFromXML();
+  } catch (e) {
+    console.error('refreshFromXML failed:', e?.message || e);
+  }
 }
 refreshLoop();
 setInterval(refreshLoop, SCRAPE_INTERVAL_MS);
 
 // ---------- app ----------
 const app = express();
-app.use(cors({
-  origin: FRONTEND_ORIGIN === '*' ? true : [FRONTEND_ORIGIN],
-  credentials: true
-}));
+app.use(
+  cors({
+    origin: FRONTEND_ORIGIN === '*' ? true : [FRONTEND_ORIGIN],
+    credentials: true
+  })
+);
 app.use(express.json({ limit: '512kb' }));
 app.use(morgan('tiny'));
-app.use(session({
-  secret: SESSION_SECRET,
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    httpOnly: true,
-    sameSite: 'lax',
-    maxAge: 7 * 24 * 60 * 60 * 1000 // 1 week re-login
-    // set secure: true when behind HTTPS/proxy
-  }
-}));
+app.use(
+  session({
+    secret: SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 1 week re-login
+      // set secure: true when behind HTTPS/proxy
+    }
+  })
+);
 
 // ---------- auth ----------
 function requireAuth(req, res, next) {
-  if (!req.session?.user) return res.status(401).json({ ok:false, error:'auth' });
+  if (!req.session?.user) return res.status(401).json({ ok: false, error: 'auth' });
   next();
 }
 function requireAdmin(req, res, next) {
-  if (!req.session?.user || req.session.user.role !== 'admin') return res.status(403).json({ ok:false, error:'admin' });
+  if (!req.session?.user || req.session.user.role !== 'admin')
+    return res.status(403).json({ ok: false, error: 'admin' });
   next();
 }
 
 app.post('/auth/login', (req, res) => {
   const { username, password } = req.body || {};
-  if (!username || !password) return res.status(400).json({ ok:false });
+  if (!username || !password) return res.status(400).json({ ok: false });
   const u = st.getUserByName.get(username);
-  if (!u || !bcrypt.compareSync(password, u.passhash)) return res.status(401).json({ ok:false });
+  if (!u || !bcrypt.compareSync(password, u.passhash)) return res.status(401).json({ ok: false });
   req.session.user = { id: u.id, username: u.username, role: u.role };
-  res.json({ ok:true, user: req.session.user });
+  res.json({ ok: true, user: req.session.user });
 });
 app.post('/auth/logout', (req, res) => {
-  req.session.destroy(() => res.json({ ok:true }));
+  req.session.destroy(() => res.json({ ok: true }));
 });
 app.get('/auth/me', (req, res) => {
-  res.json({ ok:true, user: req.session?.user || null });
+  res.json({ ok: true, user: req.session?.user || null });
 });
 
 // Admin user management
-app.get('/admin/users', requireAdmin, (req,res) => {
+app.get('/admin/users', requireAdmin, (req, res) => {
   res.json(st.listUsers.all());
 });
-app.post('/admin/users', requireAdmin, (req,res) => {
-  const { username, password, role='user' } = req.body || {};
-  if (!username || !password) return res.status(400).json({ ok:false });
+app.post('/admin/users', requireAdmin, (req, res) => {
+  const { username, password, role = 'user' } = req.body || {};
+  if (!username || !password) return res.status(400).json({ ok: false });
   const hash = bcrypt.hashSync(password, 10);
   try {
     st.addUser.run(username, hash, role, new Date().toISOString());
-    res.json({ ok:true });
+    res.json({ ok: true });
   } catch {
-    res.status(409).json({ ok:false, error:'exists' });
+    res.status(409).json({ ok: false, error: 'exists' });
   }
 });
-app.post('/admin/users/:id/reset', requireAdmin, (req,res) => {
+app.post('/admin/users/:id/reset', requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   const { password } = req.body || {};
-  if (!password) return res.status(400).json({ ok:false });
+  if (!password) return res.status(400).json({ ok: false });
   const hash = bcrypt.hashSync(password, 10);
   st.setPass.run(hash, id);
-  res.json({ ok:true });
+  res.json({ ok: true });
 });
-app.delete('/admin/users/:id', requireAdmin, (req,res) => {
+app.delete('/admin/users/:id', requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   st.delUser.run(id);
-  res.json({ ok:true });
+  res.json({ ok: true });
 });
 
 // ---------- API ----------
-app.get('/', (_,res)=>res.json({ ok:true, service:'VADA backend' }));
+app.get('/', (_, res) => res.json({ ok: true, service: 'VADA backend' }));
 
-// flights + optional first-click aggregation
-app.get('/api/flights', requireAuth, (req,res) => {
-  const type = (req.query.type || 'arr').toLowerCase();           // arr | dep
-  const scope = (req.query.scope || 'all').toLowerCase();         // all | domestic | international
+// flights (+ optional first-click aggregation)
+app.get('/api/flights', requireAuth, (req, res) => {
+  const type = (req.query.type || 'arr').toLowerCase(); // arr | dep
+  const scope = (req.query.scope || 'all').toLowerCase(); // all | domestic | international
   const includeFirst = String(req.query.includeFirst || '0') === '1';
 
   const rows = st.listFlights.all({ type, scope });
 
   if (!includeFirst) return res.json(rows);
 
-  const enrich = rows.map(r => {
-    const ss = st.firstByAction.get({ type, flightNo:r.flightNo, scheduled:r.scheduled, action:'ss' }) || null;
-    const bus = st.firstByAction.get({ type, flightNo:r.flightNo, scheduled:r.scheduled, action:'bus' }) || null;
-    const fp = st.firstByAction.get({ type, flightNo:r.flightNo, scheduled:r.scheduled, action:'fp' }) || null;
-    const lp = st.firstByAction.get({ type, flightNo:r.flightNo, scheduled:r.scheduled, action:'lp' }) || null;
+  const enrich = rows.map((r) => {
+    const ss = st.firstByAction.get({ type, flightNo: r.flightNo, scheduled: r.scheduled, action: 'ss' }) || null;
+    const bus = st.firstByAction.get({ type, flightNo: r.flightNo, scheduled: r.scheduled, action: 'bus' }) || null;
+    const fp = st.firstByAction.get({ type, flightNo: r.flightNo, scheduled: r.scheduled, action: 'fp' }) || null;
+    const lp = st.firstByAction.get({ type, flightNo: r.flightNo, scheduled: r.scheduled, action: 'lp' }) || null;
     return { ...r, first: { ss, bus, fp, lp } };
   });
   res.json(enrich);
 });
 
 // log an action (ss | bus | fp | lp)
-app.post('/api/actions', requireAuth, (req,res) => {
+app.post('/api/actions', requireAuth, (req, res) => {
   const { type, flightNo, scheduled, action } = req.body || {};
-  if (!type || !flightNo || !scheduled || !action) return res.status(400).json({ ok:false });
+  if (!type || !flightNo || !scheduled || !action) return res.status(400).json({ ok: false });
   const userId = String(req.session.user.username || req.session.user.id);
   const ts = new Date().toISOString();
   st.addAction.run(type, flightNo, scheduled, userId, action, ts);
-  res.json({ ok:true, ts, userId });
+  res.json({ ok: true, ts, userId });
 });
 
-// list all actions for a flight (admin-only view)
-app.get('/api/actions', requireAdmin, (req,res) => {
+// list all actions for a flight (admin-only)
+app.get('/api/actions', requireAdmin, (req, res) => {
   const { type, flightNo, scheduled } = req.query || {};
-  if (!type || !flightNo || !scheduled) return res.status(400).json({ ok:false });
+  if (!type || !flightNo || !scheduled) return res.status(400).json({ ok: false });
   res.json(st.listActionsAll.all({ type, flightNo, scheduled }));
 });
 
 // my flights
-app.get('/api/my-flights', requireAuth, (req,res) => {
-  const { type='arr' } = req.query;
+app.get('/api/my-flights', requireAuth, (req, res) => {
+  const { type = 'arr' } = req.query;
   const userId = req.session.user.username;
-  const rows = db.prepare(`
-    SELECT mf.flightNo, mf.scheduled
-    FROM my_flights mf
-    WHERE mf.userId=? AND mf.type=?
-    ORDER BY mf.scheduled
-  `).all(userId, type);
-  res.json(rows);
+  res.json(st.listMy.all(userId, type));
 });
-app.post('/api/my-flights', requireAuth, (req,res) => {
+app.post('/api/my-flights', requireAuth, (req, res) => {
   const { type, flightNo, scheduled } = req.body || {};
-  if (!type || !flightNo || !scheduled) return res.status(400).json({ ok:false });
+  if (!type || !flightNo || !scheduled) return res.status(400).json({ ok: false });
   const userId = req.session.user.username;
   st.addMy.run(userId, type, flightNo, scheduled);
-  res.json({ ok:true });
+  res.json({ ok: true });
 });
-app.delete('/api/my-flights', requireAuth, (req,res) => {
+app.delete('/api/my-flights', requireAuth, (req, res) => {
   const { type, flightNo, scheduled } = req.body || {};
-  if (!type || !flightNo || !scheduled) return res.status(400).json({ ok:false });
+  if (!type || !flightNo || !scheduled) return res.status(400).json({ ok: false });
   const userId = req.session.user.username;
   st.delMy.run(userId, type, flightNo, scheduled);
-  res.json({ ok:true });
+  res.json({ ok: true });
 });
 
 // PSM
-app.get('/api/psm', requireAuth, (req,res) => {
-  const { type='arr', flightNo, scheduled } = req.query || {};
-  if (!flightNo || !scheduled) return res.status(400).json({ ok:false });
+app.get('/api/psm', requireAuth, (req, res) => {
+  const { type = 'arr', flightNo, scheduled } = req.query || {};
+  if (!flightNo || !scheduled) return res.status(400).json({ ok: false });
   res.json(st.listPSM.all(type, flightNo, scheduled));
 });
-app.post('/api/psm', requireAuth, async (req,res) => {
+app.post('/api/psm', requireAuth, async (req, res) => {
   const { type, flightNo, scheduled, text } = req.body || {};
-  if (!type || !flightNo || !scheduled || !text) return res.status(400).json({ ok:false });
+  if (!type || !flightNo || !scheduled || !text) return res.status(400).json({ ok: false });
   const userId = req.session.user.username;
   const ts = new Date().toISOString();
   st.addPSM.run(userId, type, flightNo, scheduled, String(text).slice(0, 500), ts);
-  res.json({ ok:true });
+  res.json({ ok: true });
 
   // fan-out to subscribers
   if (!HAVE_VAPID) return;
-  const ids = st.myUsersForFlight.all(type, flightNo, scheduled).map(r => r.userId);
+  const ids = st.myUsersForFlight.all(type, flightNo, scheduled).map((r) => r.userId);
   if (!ids.length) return;
   const subs = st.subsForUsers(ids);
-  await Promise.all(subs.map(s =>
-    webpush.sendNotification(
-      { endpoint: s.endpoint, keys:{ p256dh:s.p256dh, auth:s.auth } },
-      JSON.stringify({
-        title: `PSM: ${flightNo}`,
-        body: text,
-        tag: `psm-${type}-${flightNo}-${scheduled}`
-      })
-    ).catch(()=>{})
-  ));
+  await Promise.all(
+    subs.map((s) =>
+      webpush
+        .sendNotification(
+          { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
+          JSON.stringify({
+            title: `PSM: ${flightNo}`,
+            body: text,
+            tag: `psm-${type}-${flightNo}-${scheduled}`
+          })
+        )
+        .catch(() => {})
+    )
+  );
 });
 
 // Push API
-app.get('/api/push/vapidPublicKey', (_,res) => res.json({ key: VAPID_PUBLIC_KEY || '' }));
-app.post('/api/push/subscribe', requireAuth, (req,res) => {
+app.get('/api/push/vapidPublicKey', requireAuth, (_, res) =>
+  res.json({ key: VAPID_PUBLIC_KEY || '' })
+);
+app.post('/api/push/subscribe', requireAuth, (req, res) => {
   const { endpoint, keys } = req.body || {};
-  if (!endpoint || !keys?.p256dh || !keys?.auth) return res.status(400).json({ ok:false });
+  if (!endpoint || !keys?.p256dh || !keys?.auth) return res.status(400).json({ ok: false });
   st.addSub.run(req.session.user.username, endpoint, keys.p256dh, keys.auth);
-  res.json({ ok:true });
+  res.json({ ok: true });
 });
 
 // Manual refresh
-app.post('/refresh', (req,res) => {
+app.post('/refresh', (req, res) => {
   const token = req.query.token || req.headers['x-admin-token'];
-  if (!ADMIN_TOKEN || token !== ADMIN_TOKEN) return res.status(401).json({ ok:false });
-  refreshFromXML().then(()=>res.json({ ok:true })).catch(e => res.status(500).json({ ok:false, error:String(e) }));
-});
-
-// Export (admin) — JSON
-app.get('/admin/export', requireAdmin, (req,res) => {
-  const type = (req.query.type || 'arr').toLowerCase();
-  const rows = db.prepare(`SELECT * FROM flights WHERE type=? ORDER BY dayTag, time(scheduled)`).all(type);
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Content-Disposition', `attachment; filename=${type}-flights.json`);
-  res.end(JSON.stringify(rows, null, 2));
+  if (!ADMIN_TOKEN || token !== ADMIN_TOKEN) return res.status(401).json({ ok: false });
+  refreshFromXML()
+    .then(() => res.json({ ok: true }))
+    .catch((e) => res.status(500).json({ ok: false, error: String(e) }));
 });
 
 app.listen(PORT, () => console.log(`VADA backend listening on :${PORT}`));
