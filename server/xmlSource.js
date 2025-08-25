@@ -1,4 +1,3 @@
-// server/xmlSource.js
 import axios from 'axios';
 import { XMLParser } from 'fast-xml-parser';
 
@@ -28,7 +27,6 @@ const normFlightNo = (s) => {
 function normalizeArray(items, kind) {
   const out = [];
   if (!Array.isArray(items)) items = items ? [items] : [];
-
   for (const it of items) {
     const flightNo = normFlightNo(it.FlightNo || it.Flight || it.FltNo || it.Number || it.FNo);
     if (!flightNo) continue;
@@ -36,13 +34,11 @@ function normalizeArray(items, kind) {
     const from = it.From || it.Origin || it.CityFrom || it.Orig || '';
     const to   = it.To   || it.Destination || it.CityTo || it.Dest || '';
 
-    // arrivals show origin; departures show destination
     const origin_or_destination = CLEAN(kind === 'arr' ? (from || to) : (to || from));
-
     const scheduled = HHMM(it.STA || it.STD || it.Sched || it.Time || it.Scheduled);
     const estimated = HHMM(it.ETA || it.ETD || it.Est || it.Estimated);
+    const terminal  = CLEAN(it.Terminal || it.Term || it.Gate || it.TerminalCode || '');
 
-    const terminal = CLEAN(it.Terminal || it.Term || it.Gate || it.TerminalCode || '');
     const ctRaw = String(it.CarrierType || it.DomInt || it.Sector || it.Category || '').toUpperCase();
     const category = ctRaw.startsWith('D') ? 'domestic'
                    : ctRaw.startsWith('I') ? 'international'
@@ -50,24 +46,10 @@ function normalizeArray(items, kind) {
 
     const status = normStatus(it.Status || it.Remark || it.Remarks);
 
-    out.push({
-      type: kind,
-      flightNo,
-      origin_or_destination,
-      scheduled,
-      estimated,
-      terminal,
-      status,
-      category
-    });
+    out.push({ type: kind, flightNo, origin_or_destination, scheduled, estimated, terminal, status, category });
   }
-
-  // De-dup by (type, flightNo, scheduled)
   const uniq = new Map();
-  for (const r of out) {
-    const k = `${r.type}|${r.flightNo}|${r.scheduled}`;
-    if (!uniq.has(k)) uniq.set(k, r);
-  }
+  for (const r of out) { const k = `${r.type}|${r.flightNo}|${r.scheduled}`; if (!uniq.has(k)) uniq.set(k, r); }
   return [...uniq.values()];
 }
 
@@ -102,9 +84,7 @@ export async function fetchXMLAll() {
   const ARR_URL = process.env.FIS_XML_ARR_URL;
   const DEP_URL = process.env.FIS_XML_DEP_URL;
   const TIMEOUT = Number(process.env.FIS_XML_TIMEOUT_MS || 12000);
-  const HDRS = (() => {
-    try { return JSON.parse(process.env.FIS_XML_HEADERS || '{}'); } catch { return {}; }
-  })();
+  const HDRS = (() => { try { return JSON.parse(process.env.FIS_XML_HEADERS || '{}'); } catch { return {}; } })();
 
   const [arrRoot, depRoot] = await Promise.all([
     ARR_URL ? fetchXML(ARR_URL, TIMEOUT, HDRS).catch(()=>null) : null,
@@ -113,6 +93,5 @@ export async function fetchXMLAll() {
 
   const arr = normalizeRoot(arrRoot, 'arr');
   const dep = normalizeRoot(depRoot, 'dep');
-
   return { arr, dep };
 }
