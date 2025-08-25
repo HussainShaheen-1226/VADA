@@ -1,101 +1,140 @@
-// client/src/components/FlightRow.jsx
-import React, { useMemo, useState } from "react";
-import { postLog, addMyFlight, delMyFlight, listPSM, postPSM } from "../utils/api";
+import React, { useEffect, useMemo, useState } from "react";
+import { addMy, delMy, listPSM, postAction, postPSM } from "../utils/api";
 
-export default function FlightRow({ f, type, userId, mySet, refreshMy }) {
-  const [note, setNote] = useState("");
-  const [psmOpen, setPsmOpen] = useState(false);
-  const key = `${type}|${f.flightNo}|${f.scheduled}`;
-  const isMine = mySet?.has(key);
+const telSS = "+9603337100";
+const telBUS = "+9603337253";
 
-  const title = useMemo(() => {
-    const head = f.flightNo || "-";
-    const tail = [f.origin_or_destination, f.terminal ? `(${f.terminal})` : ""]
-      .filter(Boolean)
-      .join(" ");
-    return { head, tail };
+export default function FlightRow({ f, type, userId, refresh }) {
+  const [psm, setPsm] = useState("");
+  const [psmList, setPsmList] = useState([]);
+  const [first, setFirst] = useState(f.first || null);
+  const [inMine, setInMine] = useState(false);
+
+  useEffect(() => {
+    // preload PSM messages for this flight
+    listPSM(type, f.flightNo, f.scheduled).then(setPsmList).catch(()=>{});
+  }, [type, f.flightNo, f.scheduled]);
+
+  // UI helpers
+  const info = useMemo(() => {
+    return (
+      <>
+        <div className="termFlight">
+          {(f.terminal ? `[${f.terminal}] ` : '')}{f.flightNo}
+        </div>
+        <div className="origin">{f.origin_or_destination}</div>
+        {f.dayTag === "tomorrow" ? <div className="badge gray" style={{marginTop:6}}>Tomorrow</div> : null}
+        <div className="badge gray" style={{marginTop:6}}>{f.category}</div>
+      </>
+    );
   }, [f]);
 
-  async function logAndDial(action, tel) {
-    // log first-click only is enforced server-side (UNIQUE)
-    await postLog({
-      userId,
-      flightNo: f.flightNo,
-      scheduled: f.scheduled,
-      estimated: f.estimated || null,
-      action,
-      type,
-    });
-    if (tel) {
-      // try to start a call (mobile)
-      window.location.href = `tel:${tel}`;
-    }
-  }
-
-  const toggleMine = async () => {
-    if (isMine) {
-      await delMyFlight({ userId, type, flightNo: f.flightNo, scheduled: f.scheduled });
+  const doMyToggle = async () => {
+    if (!inMine) {
+      await addMy({ type, flightNo: f.flightNo, scheduled: f.scheduled });
+      setInMine(true);
     } else {
-      await addMyFlight({ userId, type, flightNo: f.flightNo, scheduled: f.scheduled });
+      await delMy({ type, flightNo: f.flightNo, scheduled: f.scheduled });
+      setInMine(false);
     }
-    refreshMy?.();
+    refresh && refresh();
   };
 
-  const submitPSM = async () => {
-    if (!note.trim()) return;
-    await postPSM({ userId, type, flightNo: f.flightNo, scheduled: f.scheduled, text: note.trim() });
-    setNote("");
-    setPsmOpen(false);
+  const logAction = async (action, tel) => {
+    // call phone for SS/BUS
+    if (tel) window.location.href = `tel:${tel}`;
+    const { ok } = await postAction({ type, flightNo: f.flightNo, scheduled: f.scheduled, action });
+    if (ok) {
+      // show first-click immediately if this is the first one
+      if (!first || !first[action]) {
+        const ts = new Date().toISOString();
+        const who = userId;
+        setFirst({
+          ...(first||{}),
+          [action]: { userId: who, ts }
+        });
+      }
+    }
+  };
+
+  const sendPSM = async () => {
+    if (!psm.trim()) return;
+    await postPSM({ type, flightNo: f.flightNo, scheduled: f.scheduled, text: psm.trim() });
+    setPsm("");
+    const list = await listPSM(type, f.flightNo, f.scheduled);
+    setPsmList(list);
+  };
+
+  const firstLine = (k, label) => {
+    const rec = first && first[k];
+    return (
+      <div className="small">
+        {label}: {rec ? `${new Date(rec.ts).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} by ${rec.userId}` : '—'}
+      </div>
+    );
   };
 
   return (
-    <>
-      <tr>
-        {/* MERGED COLUMN */}
-        <td style={{ minWidth: 180 }}>
-          <div style={{ fontWeight: 700 }}>{title.head}</div>
-          <div style={{ fontSize: ".9em", opacity: .85 }}>{title.tail || "-"}</div>
-        </td>
-
-        <td>{f.scheduled || "-"}</td>
-        <td>{f.estimated || "-"}</td>
-        <td>{f.status || "-"}</td>
-
-        <td className="actions">
-          <button className="pill yellow" onClick={() => logAndDial("SS", "+9603337100")}>SS</button>
-          <button className="pill yellow" onClick={() => logAndDial("BUS", "+9603337253")}>BUS</button>
-
-          {type === "dep" && (
+    <tr>
+      <td>{info}</td>
+      <td>{f.scheduled}</td>
+      <td>{f.estimated || "—"}</td>
+      <td className="small">{f.status || "—"}</td>
+      <td>
+        <div className="actions">
+          {type === "arr" ? (
             <>
-              <button className="pill" onClick={() => logAndDial("FP")}>FP</button>
-              <button className="pill" onClick={() => logAndDial("LP")}>LP</button>
+              <button className="pill yellow" onClick={()=>logAction('ss', telSS)}>SS</button>
+              <button className="pill yellow" onClick={()=>logAction('bus', telBUS)}>BUS</button>
+            </>
+          ) : (
+            <>
+              <button className="pill yellow" onClick={()=>logAction('ss', telSS)}>SS</button>
+              <button className="pill yellow" onClick={()=>logAction('bus', telBUS)}>BUS</button>
+              <button className="pill blue" onClick={()=>logAction('fp')}>FP</button>
+              <button className="pill blue" onClick={()=>logAction('lp')}>LP</button>
             </>
           )}
+          <button className="pill" onClick={doMyToggle}>{inMine ? '− My' : '+ My'}</button>
+        </div>
 
-          <button className={`pill ${isMine ? "blue" : ""}`} onClick={toggleMine}>
-            {isMine ? "✓ My" : "+ My"}
-          </button>
+        {/* First-clicks (always visible) */}
+        <div style={{marginTop:6}}>
+          {type === "arr" ? (
+            <>
+              {firstLine('ss','First SS')}
+              {firstLine('bus','First BUS')}
+            </>
+          ) : (
+            <>
+              {firstLine('ss','First SS')}
+              {firstLine('bus','First BUS')}
+              {firstLine('fp','First FP')}
+              {firstLine('lp','First LP')}
+            </>
+          )}
+        </div>
 
-          <button className="pill" onClick={() => setPsmOpen(v => !v)}>PSM</button>
-        </td>
-      </tr>
-
-      {/* Inline PSM row */}
-      {psmOpen && (
-        <tr className="psmRow">
-          <td colSpan={5}>
-            <div className="psmPane">
-              <input
-                maxLength={280}
-                placeholder="PSM note to notify everyone who has this flight…"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-              />
-              <button className="pill" onClick={submitPSM}>Send</button>
-            </div>
-          </td>
-        </tr>
-      )}
-    </>
+        {/* PSM input + list */}
+        <div className="psmPane">
+          <input
+            value={psm}
+            onChange={e=>setPsm(e.target.value)}
+            placeholder="PSM note for this flight…"
+          />
+          <button onClick={sendPSM}>Send</button>
+        </div>
+        {psmList.length ? (
+          <div className="small" style={{marginTop:8}}>
+            {psmList.map((p,idx)=>(
+              <div key={idx} style={{marginBottom:4}}>
+                <span className="badge gray" style={{marginRight:6}}>{p.userId}</span>
+                {p.text} <span style={{opacity:.6}}>· {new Date(p.ts).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </td>
+    </tr>
   );
 }
